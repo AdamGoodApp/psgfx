@@ -1,14 +1,14 @@
 // PSGFX - change the home-screen icon and background of PS5 homebrew and installed games,
-// through PS5 Upload's payload.
+// through PS5 Upload.
 // Runs a tiny local web server and opens the UI in the default browser.
-// Talks to PS5 Upload's resident payload (ports 9114 / 9113); nothing is installed on the PS5.
+// Talks to the PS5 through the PS5 Upload app's local engine (see ps5client.h); nothing is
+// installed on the PS5.
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "imaging.h"
 #include "ps5client.h"
-#include "ftp.h"
 #include "layout.h"
 #include "lib/json.hpp"
 
@@ -27,7 +27,7 @@
 #include <shellapi.h>
 #include <tlhelp32.h>
 #endif
-#define STUDIO_VERSION "1.1"
+#define STUDIO_VERSION "1.2"
 
 using json = nlohmann::json;
 
@@ -43,6 +43,7 @@ struct Staged {                 // the user's image, decoded; converted per targ
 };
 static std::mutex g_mu;
 static std::string g_ip;
+static std::string g_engine;              // PS5 Upload's engine, "host:port"; empty = 127.0.0.1:19113
 static std::map<std::string, Staged> g_staged;           // "icon" | "background"
 static std::map<std::string, std::vector<uint8_t>> g_icon_cache;
 static std::string g_config_path = "psgfx.json";
@@ -53,18 +54,24 @@ static void load_config() {
     std::ifstream f(g_config_path);
     if (!f && !g_legacy_config_path.empty()) f.open(g_legacy_config_path);
     if (!f) return;
-    try { json j; f >> j; g_ip = j.value("ip", ""); } catch (...) {}
+    try { json j; f >> j; g_ip = j.value("ip", ""); g_engine = j.value("engine", ""); } catch (...) {}
 }
 static void save_config() {
     std::ofstream f(g_config_path);
-    f << json{{"ip", g_ip}}.dump(2);
+    json j = {{"ip", g_ip}};
+    if (!g_engine.empty()) j["engine"] = g_engine;
+    f << j.dump(2);
 }
 
 static ps5::Client client() {
     ps5::Client c; c.host = g_ip;
-    if (const char *e = getenv("PS5AS_HOST")) c.host = e;                  // test hooks (mock PS5)
-    if (const char *e = getenv("PS5AS_MGMT_PORT")) c.mgmt_port = atoi(e);
-    if (const char *e = getenv("PS5AS_XFER_PORT")) c.xfer_port = atoi(e);
+    std::string eng = g_engine;
+    if (const char *e = getenv("PS5AS_ENGINE")) eng = e;                   // test hook (tools/mock_engine.py)
+    if (!eng.empty()) {
+        size_t colon = eng.rfind(':');
+        c.engine_host = eng.substr(0, colon);
+        if (colon != std::string::npos) c.engine_port = atoi(eng.c_str() + colon + 1);
+    }
     return c;
 }
 
@@ -80,17 +87,26 @@ static bool mounted_image(const std::string &src) {
 // ─────────────────────────────── PS5 file helpers ─────────────────────
 static json list_dir(ps5::Client &c, const std::string &dir) {
     try {
-        json j = json::parse(c.call_str(ps5::FS_LIST_DIR, json{{"path", dir}, {"limit", 4096}}.dump(), ps5::FS_LIST_DIR_ACK));
-        return j.value("entries", json::array());
+        json all = json::array();
+        for (uint64_t off = 0;;) {   // the console answers at most 256 entries a call
+            json j = json::parse(c.call_str(ps5::FS_LIST, json{{"path", dir}, {"offset", off}, {"limit", 256}}.dump()));
+            auto e = j.value("entries", json::array());
+            for (auto &x : e) all.push_back(x);
+            if (!j.value("truncated", false) || e.empty()) break;
+            off += e.size();
+        }
+        return all;
     } catch (...) { return json::array(); }
 }
 static bool exists(ps5::Client &c, const std::string &dir, const std::string &name) {
     for (auto &e : list_dir(c, dir)) if (e.value("name", "") == name) return true;
     return false;
 }
-// FS_COPY's "overwrite" must be a number: the payload reads it as an integer field.
-static void copy_file(ps5::Client &c, const std::string &from, const std::string &to, bool overwrite) {
-    c.call(ps5::FS_COPY, json{{"from", from}, {"to", to}, {"overwrite", overwrite ? 1 : 0}}.dump(), ps5::FS_COPY_ACK, 30000);
+// Art files are small, so a copy is a read and a write (PS5 Upload's own copy runs as a job).
+static void copy_file(ps5::Client &c, const std::string &from, const std::string &to) {
+    auto data = c.read_file(from, 16u << 20);
+    try { c.call(ps5::FS_MKDIR, json{{"path", to.substr(0, to.find_last_of('/'))}}.dump()); } catch (...) {}
+    c.upload(to, data);
 }
 
 // Title name from a PS4 param.sfo.
@@ -124,13 +140,13 @@ static std::string meta_title(ps5::Client &c, const std::string &id) {
 }
 
 // ─────────────────────────────── home layout ──────────────────────────
-// Edits the home-screen database through PS5 Upload's built-in FTP server (see ftp.h).
+// Edits the home-screen database, /system_data/priv/mms/app.db. PS5 Upload reads it directly,
+// but only writes under /data, /user and drives, so a new database goes to /data/psgfx first
+// and PS5 Upload's console shell copies it into place (see push_db).
 // Every apply re-downloads the database, saves it to PSGFX Layout/backups first, edits
 // a copy in memory, checks it, then uploads it.
 namespace fs = std::filesystem;
 static std::mutex g_layout_mu;                       // one layout operation at a time
-static std::mutex g_ftp_mu;
-static std::unique_ptr<ftp::Session> g_ftp;
 static std::string g_layout_user;
 static std::map<std::string, std::vector<uint8_t>> g_tile_img_cache;
 
@@ -145,25 +161,6 @@ static std::string now_stamp(const char *fmt) {
     localtime_r(&t, &l);
 #endif
     char b[64]; strftime(b, sizeof b, fmt, &l); return b;
-}
-
-// Runs fn with a live FTP session, reconnecting once if the old one has gone stale.
-template <class F> static auto with_ftp(F fn) {
-    std::lock_guard<std::mutex> l(g_ftp_mu);
-    for (int attempt = 0;; attempt++) {
-        try {
-            if (!g_ftp) {
-                auto c = client();
-                int port = ftp::start_server(c);
-                if (const char *e = getenv("PS5AS_FTP_PORT")) port = atoi(e);   // test hook
-                g_ftp = std::make_unique<ftp::Session>(c.host, port);
-            }
-            return fn(*g_ftp);
-        } catch (const ps5::Error &) {
-            g_ftp.reset();
-            if (attempt) throw;
-        }
-    }
 }
 
 static std::vector<uint8_t> read_local(const fs::path &p) {
@@ -196,15 +193,33 @@ static json layout_state(const std::vector<uint8_t> &db_bytes, std::vector<std::
 }
 
 static std::vector<uint8_t> pull_db(std::vector<std::string> *warn = nullptr) {
-    return with_ftp([&](ftp::Session &f) {
-        if (warn)
-            for (auto &n : f.list(layout::DB_DIR))
-                if (n == "app.db-wal" || n == "app.db-journal")
-                    warn->push_back("The console has unsaved home-screen changes (" + n + "). For the most accurate result, restart the PS5 and reconnect.");
-        auto b = f.get(layout::DB_PATH);
-        if (b.empty()) throw ps5::Error("The PS5 sent an empty home-screen database.");
-        return b;
-    });
+    auto c = client();
+    if (warn)
+        for (auto &e : list_dir(c, layout::DB_DIR)) {
+            std::string n = e.value("name", "");
+            if ((n == "app.db-wal" || n == "app.db-journal") && e.value("size", 0) > 0)
+                warn->push_back("The console has unsaved home-screen changes (" + n + "). For the most accurate result, restart the PS5 and reconnect.");
+        }
+    auto b = c.read_file(layout::DB_PATH);
+    if (b.empty()) throw ps5::Error("The PS5 sent an empty home-screen database.");
+    return b;
+}
+
+// Puts a new database in place: upload to /data/psgfx, copy over app.db with PS5 Upload's
+// shell `cp` (which keeps the file, so the system's open handle sees the new contents), then
+// read it back to be sure.
+static void push_db(const std::vector<uint8_t> &db) {
+    auto c = client();
+    const std::string tmp = "/data/psgfx/app.db.upload";
+    try { c.call(ps5::FS_MKDIR, json{{"path", "/data/psgfx"}}.dump()); } catch (...) {}
+    c.upload(tmp, db);
+    json r = c.shell("cp " + tmp + " " + layout::DB_PATH);
+    if (r.value("exit_code", -1) != 0)
+        throw ps5::Error("The PS5 didn't accept the new home-screen database: " +
+                         (r.contains("stdout") ? r.value("stdout", "") : r.dump()) + " Nothing was changed.");
+    try { c.remove(tmp); } catch (...) {}
+    if (c.read_file(layout::DB_PATH) != db)
+        throw ps5::Error("The home-screen database on the PS5 doesn't match what PSGFX sent. Restore a backup from the Backups list.");
 }
 
 static json layout_load(const std::string &user) {
@@ -229,7 +244,7 @@ static std::vector<uint8_t> tile_image(const std::string &path) {
     }
     std::vector<uint8_t> out;
     try {
-        auto b = with_ftp([&](ftp::Session &f) { return f.get(path); });
+        auto b = client().read_file(path);
         img::Image im;
         if (ext == "dds") { if (img::from_bc7_dds(b, im)) out = img::to_png(img::resize(im, 960, 540)); }
         else out = std::move(b);
@@ -248,7 +263,7 @@ static json layout_apply(const json &req) {
     auto info = layout::analyze(db, g_layout_user);
     layout::apply(db, info, req, log);
     auto out = db.serialize();
-    with_ftp([&](ftp::Session &f) { f.put(layout::DB_PATH, out); return 0; });
+    push_db(out);
     log.push_back("Uploaded. Restart the PS5 to see the new home screen.");
     return {{"ok", true}, {"log", log}, {"backup", backup}, {"layout", layout_state(out)}};
 }
@@ -270,7 +285,7 @@ static json layout_restore(const std::string &id) {
     auto db = read_local(data_path("backups") / fs::u8path(id) / "app.db");
     if (db.empty()) throw ps5::Error("That backup is missing its database file.");
     { layout::DB check(db); }   // throws if it isn't a healthy database
-    with_ftp([&](ftp::Session &f) { f.put(layout::DB_PATH, db); return 0; });
+    push_db(db);
     return {{"ok", true}, {"layout", layout_state(db)}};
 }
 
@@ -296,7 +311,7 @@ static json list_apps() {
     auto c = client();
     std::map<std::string, std::string> src, name;
     std::set<std::string> mounted;
-    json reg = json::parse(c.call_str(ps5::APP_LIST_REGISTERED, "", ps5::APP_LIST_REGISTERED_ACK));
+    json reg = json::parse(c.call_str(ps5::APP_LIST, "{}"));
     for (auto &a : reg.value("apps", json::array())) {
         std::string id = a.value("title_id", "");
         src[id] = a.value("src", "");
@@ -307,7 +322,7 @@ static json list_apps() {
     bool have_db = false;
     std::set<std::string> in_db;
     try {   // Sony's app list with real names (newer PS5 Upload payloads)
-        json db = json::parse(c.call_str(ps5::APPDB_QUERY, "{}", ps5::APPDB_QUERY_ACK));
+        json db = json::parse(c.call_str(ps5::APP_DB_QUERY, "{}"));
         for (auto &a : db.value("apps", json::array())) {
             std::string id = a.value("title_id", ""), n = a.value("name", "");
             if (id.empty()) continue;
@@ -422,7 +437,7 @@ static std::vector<Target> game_targets(ps5::Client &c, const std::string &id, c
                                    : (ln.rfind("pic0", 0) == 0 || ln.rfind("pic1", 0) == 0);
         if (!want) continue;
         std::vector<uint8_t> h;
-        try { h = c.call(ps5::FS_READ, json{{"path", appmeta(id) + "/" + name}, {"offset", 0}, {"limit", 160}}.dump(), ps5::FS_READ_ACK); }
+        try { h = c.read(appmeta(id) + "/" + name, 0, 160); }
         catch (...) { continue; }
         Target t; t.name = name; t.dds = dds;
         if (png && h.size() >= 24 && memcmp(h.data(), "\x89PNG", 4) == 0) {
@@ -447,8 +462,8 @@ static std::vector<Target> game_targets(ps5::Client &c, const std::string &id, c
 // Keep the first original as <name>.bak; mark files we create with <name>.added.
 static void backup_once(ps5::Client &c, const std::string &dir, const std::string &name, json &log) {
     if (exists(c, dir, name + ".bak") || exists(c, dir, name + ".added")) return;
-    if (exists(c, dir, name)) { copy_file(c, dir + "/" + name, dir + "/" + name + ".bak", false); log.push_back("Backed up " + name); }
-    else c.call(ps5::FS_WRITE_BYTES, json{{"path", dir + "/" + name + ".added"}, {"bytes", "MQ=="}}.dump(), ps5::FS_WRITE_BYTES_ACK);
+    if (exists(c, dir, name)) { copy_file(c, dir + "/" + name, dir + "/" + name + ".bak"); log.push_back("Backed up " + name); }
+    else c.upload(dir + "/" + name + ".added", {'1'});
 }
 
 // Homebrew: copy the app's sce_sys art to where the home screen reads it, then ask PS5 Upload
@@ -465,12 +480,12 @@ static void sync_home(ps5::Client &c, const std::string &id, const std::string &
         std::vector<std::string> dests = {appmeta(id) + "/" + name, "/user/app/" + id + "/sce_sys/" + name};
         if (name == "icon0.png") dests.push_back("/user/app/" + id + "/icon0.png");
         for (auto &d : dests) {
-            try { copy_file(c, dir + "/" + name, d, true); }
+            try { copy_file(c, dir + "/" + name, d); }
             catch (const std::exception &e) { log.push_back("Couldn't update " + d + ": " + e.what()); }
         }
     }
     try {
-        c.call_str(ps5::APP_REGISTER, json{{"src_path", src}}.dump(), ps5::APP_REGISTER_ACK, 60000);
+        c.call_str(ps5::APP_REGISTER, json{{"src_path", src}}.dump(), 60000);
         log.push_back("Refreshed the home screen. If the old art still shows, restart the PS5.");
     } catch (const std::exception &e) {
         std::string m = e.what();
@@ -506,9 +521,7 @@ static bool probe_art(const std::vector<uint8_t> &h, Target &t) {
 }
 
 static std::vector<uint8_t> read_head(ps5::Client &c, const std::string &path) {
-    try { return c.call(ps5::FS_READ, json{{"path", path}, {"offset", 0}, {"limit", 160}}.dump(), ps5::FS_READ_ACK); }
-    catch (...) {}
-    try { return with_ftp([&](ftp::Session &f) { return f.get(path); }); }   // outside /user and /data
+    try { return c.read(path, 0, 160); }
     catch (...) { return {}; }
 }
 
@@ -532,7 +545,7 @@ static void upload_db(const std::vector<uint8_t> &orig, layout::DB &db, const st
     std::string backup = make_backup(orig, label);
     auto out = db.serialize();
     { layout::DB check(out); }   // throws if the edit broke it; nothing is uploaded then
-    with_ftp([&](ftp::Session &f) { f.put(layout::DB_PATH, out); return 0; });
+    push_db(out);
     { std::lock_guard<std::mutex> l(g_mu); g_tile_img_cache.clear(); }
     log.push_back("Home-screen database updated (backup " + backup + ")");
 }
@@ -594,7 +607,7 @@ static std::set<std::string> game_apply_db(ps5::Client &c, const std::string &id
     std::string o = originals.dump(2);
     c.upload(dir + "/" + ORIGINALS, std::vector<uint8_t>(o.begin(), o.end()));
     upload_db(orig, db, "Before new art for " + id, log);
-    for (auto &p : replaced) try { c.call(ps5::FS_DELETE, json{{"path", p}}.dump(), ps5::FS_DELETE_ACK); } catch (...) {}
+    for (auto &p : replaced) try { c.remove(p); } catch (...) {}
     return done;
 }
 
@@ -614,7 +627,7 @@ static bool game_restore_db(ps5::Client &c, const std::string &id, json &log) {
     }
     for (auto &e : list_dir(c, appmeta(id))) {
         std::string n = e.value("name", "");
-        if (n.rfind("psgfx_", 0) == 0) try { c.call(ps5::FS_DELETE, json{{"path", appmeta(id) + "/" + n}}.dump(), ps5::FS_DELETE_ACK); } catch (...) {}
+        if (n.rfind("psgfx_", 0) == 0) try { c.remove(appmeta(id) + "/" + n); } catch (...) {}
     }
     log.push_back("Pointed the home screen back at the game's own art");
     return true;
@@ -688,15 +701,15 @@ static json do_restore(const std::string &id, const std::string &src, std::strin
     for (auto &name : names) {
         const std::string path = dir + "/" + name;
         if (exists(c, dir, name + ".bak")) {
-            copy_file(c, path + ".bak", path, true);
-            c.call(ps5::FS_DELETE, json{{"path", path + ".bak"}}.dump(), ps5::FS_DELETE_ACK);
+            copy_file(c, path + ".bak", path);
+            c.remove(path + ".bak");
             log.push_back("Restored " + name);
         } else {
-            try { c.call(ps5::FS_DELETE, json{{"path", path}}.dump(), ps5::FS_DELETE_ACK); } catch (...) {}
-            c.call(ps5::FS_DELETE, json{{"path", path + ".added"}}.dump(), ps5::FS_DELETE_ACK);
+            try { c.remove(path); } catch (...) {}
+            c.remove(path + ".added");
             if (kind_of_app != "game")   // registering copied it here too, and never deletes
                 for (const std::string &copy : {appmeta(id) + "/" + name, "/user/app/" + id + "/sce_sys/" + name})
-                    try { c.call(ps5::FS_DELETE, json{{"path", copy}}.dump(), ps5::FS_DELETE_ACK); } catch (...) {}
+                    try { c.remove(copy); } catch (...) {}
             log.push_back("Removed " + name + " (it wasn't there originally)");
         }
     }
@@ -719,11 +732,11 @@ static void rename_homebrew_param(ps5::Client &c, const std::string &id, const s
             for (auto &[lang, v] : j["localizedParameters"].items())
                 if (v.is_object() && v.contains("titleName")) { v["titleName"] = name; n++; }
         if (!n) { log.push_back("This app's param.json has no name to update; only the home screen was renamed."); return; }
-        if (!exists(c, dir, "param.json.orig")) copy_file(c, dir + "/param.json", dir + "/param.json.orig", false);
+        if (!exists(c, dir, "param.json.orig")) copy_file(c, dir + "/param.json", dir + "/param.json.orig");
         std::string out = j.dump(2);
         c.upload(dir + "/param.json", std::vector<uint8_t>(out.begin(), out.end()));
         for (auto &d : {appmeta(id) + "/param.json", "/user/app/" + id + "/sce_sys/param.json"})
-            try { if (exists(c, d.substr(0, d.find_last_of('/')), "param.json")) copy_file(c, dir + "/param.json", d, true); } catch (...) {}
+            try { if (exists(c, d.substr(0, d.find_last_of('/')), "param.json")) copy_file(c, dir + "/param.json", d); } catch (...) {}
         log.push_back("Updated the name in the app's param.json");
     } catch (const std::exception &e) {
         log.push_back(std::string("Couldn't update the app's param.json (") + e.what() + "). Changing its art later may bring back the old name.");

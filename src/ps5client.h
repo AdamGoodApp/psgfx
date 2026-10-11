@@ -1,15 +1,17 @@
-// Minimal client for PS5 Upload's resident payload (FTX2 protocol).
-//   port 9114: management (JSON request -> ACK)
-//   port 9113: transfers   (BeginTx -> StreamShard -> CommitTx)
-// Frame = 28-byte little-endian header + body.
+// Minimal client for the PS5, through the PS5 Upload app on this PC.
+//
+// PS5 Upload 6.0 replaced its old protocol (FTX2, ports 9113/9114) with AVA1: one encrypted
+// port (9120) that the console only opens to a paired app. Rather than pair a second app,
+// PSGFX hands its calls to PS5 Upload's local engine (http://127.0.0.1:19113), which already
+// holds the paired session: POST /api/mgmt/call runs one management call on the console, with
+// the same JSON bodies the old protocol used. So PS5 Upload has to be open on this PC.
 #pragma once
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <random>
-#include "lib/blake3.h"
+#include "lib/json.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -32,180 +34,167 @@ typedef int sock_t;
 
 namespace ps5 {
 
-enum Frame : uint16_t {
-    ERROR_ = 3,
-    BEGIN_TX = 10, BEGIN_TX_ACK = 11, COMMIT_TX = 14, COMMIT_TX_ACK = 15,
-    ABORT_TX = 16, ABORT_TX_ACK = 17,
-    STREAM_SHARD = 30, SHARD_ACK = 31,
-    FS_LIST_DIR = 36, FS_LIST_DIR_ACK = 37,
-    FS_DELETE = 40, FS_DELETE_ACK = 41,
-    FS_READ = 48, FS_READ_ACK = 49,
-    FS_COPY = 50, FS_COPY_ACK = 51,
-    APP_REGISTER = 56, APP_REGISTER_ACK = 57,
-    APP_LIST_REGISTERED = 62, APP_LIST_REGISTERED_ACK = 63,
-    APPDB_QUERY = 120, APPDB_QUERY_ACK = 121,
-    FS_WRITE_BYTES = 130, FS_WRITE_BYTES_ACK = 131,
-};
+// AVA1 management methods (PS5 Upload's protocol/ava1 schema) and the labels its errors carry.
+struct Method { uint16_t id; const char *label; };
+constexpr Method FS_LIST{33, "FS_LIST_DIR"}, FS_MKDIR{35, "FS_MKDIR"}, FS_READ{38, "FS_READ"},
+                 FS_WRITE{39, "FS_WRITE_BYTES"}, APP_REGISTER{48, "APP_REGISTER"},
+                 APP_LIST{51, "APP_LIST_REGISTERED"}, APP_DB_QUERY{56, "APP_DB_QUERY"},
+                 SHELL_EXEC{87, "SHELL_EXEC"};
+constexpr uint8_t JOB_DELETE = 1;
 
 struct Error : std::runtime_error { using std::runtime_error::runtime_error; };
 
-inline void put16(uint8_t *p, uint16_t v) { p[0] = v & 255; p[1] = v >> 8; }
-inline void put32(uint8_t *p, uint32_t v) { for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8 * i)); }
-inline void put64(uint8_t *p, uint64_t v) { for (int i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8 * i)); }
-inline uint64_t get64(const uint8_t *p) { uint64_t v = 0; for (int i = 7; i >= 0; i--) v = (v << 8) | p[i]; return v; }
 inline uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 
-class Conn {
-  public:
-    Conn(const std::string &host, int port, int timeout_ms) {
-        addrinfo hints{}, *res = nullptr;
-        hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
-        if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res)
-            throw Error("Can't resolve " + host);
-        s_ = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (s_ == SOCK_BAD) { freeaddrinfo(res); throw Error("socket() failed"); }
-        set_timeout(timeout_ms);
-        int one = 1; setsockopt(s_, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof one);
-        if (connect(s_, res->ai_addr, (int)res->ai_addrlen) != 0) {
-            freeaddrinfo(res); sock_close(s_); s_ = SOCK_BAD;
-            throw Error("Can't reach the PS5 at " + host + ":" + std::to_string(port) +
-                        " - is PS5 Upload's payload running?");
-        }
-        freeaddrinfo(res);
+inline std::string b64_encode(const uint8_t *d, size_t n) {
+    static const char *T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o; o.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        uint32_t v = (uint32_t)d[i] << 16 | (i + 1 < n ? (uint32_t)d[i + 1] << 8 : 0) | (i + 2 < n ? d[i + 2] : 0);
+        o += T[v >> 18 & 63]; o += T[v >> 12 & 63];
+        o += i + 1 < n ? T[v >> 6 & 63] : '='; o += i + 2 < n ? T[v & 63] : '=';
     }
-    ~Conn() { if (s_ != SOCK_BAD) sock_close(s_); }
-    Conn(const Conn &) = delete; Conn &operator=(const Conn &) = delete;
+    return o;
+}
+inline std::string b64_encode(const std::string &s) { return b64_encode((const uint8_t *)s.data(), s.size()); }
+inline std::vector<uint8_t> b64_decode(const std::string &s) {
+    std::vector<uint8_t> o; o.reserve(s.size() / 4 * 3);
+    uint32_t v = 0; int bits = 0;
+    for (char ch : s) {
+        int x = ch >= 'A' && ch <= 'Z' ? ch - 'A' : ch >= 'a' && ch <= 'z' ? ch - 'a' + 26
+              : ch >= '0' && ch <= '9' ? ch - '0' + 52 : ch == '+' ? 62 : ch == '/' ? 63 : -1;
+        if (x < 0) continue;
+        v = v << 6 | (uint32_t)x; bits += 6;
+        if (bits >= 8) { bits -= 8; o.push_back((uint8_t)(v >> bits)); }
+    }
+    return o;
+}
 
-    void set_timeout(int ms) {
+// One HTTP/1.1 request to the local engine (Connection: close). Returns (status, body).
+inline std::pair<int, std::string> http(const std::string &host, int port, const std::string &method,
+                                        const std::string &path, const std::string &body, int timeout_ms) {
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res)
+        throw Error("Can't resolve " + host);
+    sock_t s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (s == SOCK_BAD) { freeaddrinfo(res); throw Error("socket() failed"); }
 #ifdef _WIN32
-        DWORD t = (DWORD)ms;
+    DWORD t = (DWORD)timeout_ms;
 #else
-        timeval t{ms / 1000, (ms % 1000) * 1000};
+    timeval t{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
 #endif
-        setsockopt(s_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&t, sizeof t);
-        setsockopt(s_, SOL_SOCKET, SO_SNDTIMEO, (const char *)&t, sizeof t);
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&t, sizeof t);
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&t, sizeof t);
+    if (connect(s, res->ai_addr, (int)res->ai_addrlen) != 0) {
+        freeaddrinfo(res); sock_close(s);
+        throw Error("PSGFX talks to your PS5 through the PS5 Upload app, and it isn't running on this PC. "
+                    "Open PS5 Upload (version 6 or newer), make sure it's connected to your PS5, then click Connect again.");
     }
-
-    void send_frame(uint16_t type, const uint8_t *a, size_t alen, const uint8_t *b = nullptr, size_t blen = 0) {
-        uint8_t h[28] = {0};
-        put32(h, 0x32585446u);          // "FTX2"
-        put16(h + 4, 1);                 // version
-        put16(h + 6, type);
-        put32(h + 8, 0);                 // flags
-        put64(h + 12, (uint64_t)(alen + blen));
-        put64(h + 20, 0);                // trace id 0 = untracked fast path
-        send_all(h, 28);
-        if (alen) send_all(a, alen);
-        if (blen) send_all(b, blen);
+    freeaddrinfo(res);
+    std::string req = method + " " + path + " HTTP/1.1\r\nHost: " + host + ":" + std::to_string(port) +
+                      "\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) +
+                      "\r\nConnection: close\r\n\r\n" + body;
+    for (size_t off = 0; off < req.size();) {
+        int w = ::send(s, req.data() + off, (int)std::min<size_t>(req.size() - off, 1 << 20), 0);
+        if (w <= 0) { sock_close(s); throw Error("The connection to PS5 Upload dropped."); }
+        off += (size_t)w;
     }
-
-    // Returns (frame_type, body). Throws on transport errors.
-    std::pair<uint16_t, std::vector<uint8_t>> recv_frame() {
-        uint8_t h[28];
-        recv_all(h, 28);
-        if (get32(h) != 0x32585446u) throw Error("Unexpected reply from the PS5 (not PS5 Upload's payload?)");
-        uint16_t type = (uint16_t)(h[6] | h[7] << 8);
-        uint64_t len = get64(h + 12);
-        if (len > (256ull << 20)) throw Error("Reply too large");
-        std::vector<uint8_t> body((size_t)len);
-        if (len) recv_all(body.data(), (size_t)len);
-        return {type, std::move(body)};
+    std::string resp; char buf[1 << 16];
+    for (;;) {
+        int r = ::recv(s, buf, sizeof buf, 0);
+        if (r == 0) break;
+        if (r < 0) { sock_close(s); throw Error("PS5 Upload didn't answer in time."); }
+        resp.append(buf, (size_t)r);
     }
-
-  private:
-    sock_t s_ = SOCK_BAD;
-    void send_all(const uint8_t *p, size_t n) {
-        while (n) {
-            int w = ::send(s_, (const char *)p, (int)std::min<size_t>(n, 1 << 20), 0);
-            if (w <= 0) throw Error("Connection to the PS5 dropped while sending");
-            p += w; n -= (size_t)w;
+    sock_close(s);
+    size_t he = resp.find("\r\n\r\n");
+    if (resp.compare(0, 5, "HTTP/") != 0 || he == std::string::npos) throw Error("Unexpected reply from PS5 Upload.");
+    int status = atoi(resp.c_str() + resp.find(' ') + 1);
+    std::string head = resp.substr(0, he), out = resp.substr(he + 4);
+    for (auto &ch : head) ch = (char)tolower((unsigned char)ch);
+    if (head.find("transfer-encoding: chunked") != std::string::npos) {
+        std::string d; size_t p = 0;
+        for (;;) {
+            size_t e = out.find("\r\n", p);
+            if (e == std::string::npos) break;
+            size_t n = strtoull(out.c_str() + p, nullptr, 16);
+            if (n == 0 || e + 2 + n > out.size()) break;
+            d.append(out, e + 2, n);
+            p = e + 2 + n + 2;
         }
+        out.swap(d);
     }
-    void recv_all(uint8_t *p, size_t n) {
-        while (n) {
-            int r = ::recv(s_, (char *)p, (int)std::min<size_t>(n, 1 << 20), 0);
-            if (r <= 0) throw Error("The PS5 didn't answer in time");
-            p += r; n -= (size_t)r;
-        }
-    }
-};
+    return {status, out};
+}
 
 struct Client {
-    std::string host;
-    int mgmt_port = 9114, xfer_port = 9113;
+    std::string host;                                // the PS5's IP
+    std::string engine_host = "127.0.0.1"; int engine_port = 19113;
 
-    // One management round-trip. `expect` is the ACK frame type.
-    std::vector<uint8_t> call(uint16_t type, const std::string &json, uint16_t expect, int timeout_ms = 15000) {
-        Conn c(host, mgmt_port, timeout_ms);
-        c.send_frame(type, (const uint8_t *)json.data(), json.size());
-        auto [ft, body] = c.recv_frame();
-        if (ft == ERROR_) throw Error(std::string(body.begin(), body.end()));
-        if (ft != expect) throw Error("Unexpected reply type " + std::to_string(ft));
-        return body;
+    // One management call on the console. Throws ps5::Error with a readable message.
+    std::vector<uint8_t> call(Method m, const std::string &body, int timeout_ms = 15000) {
+        return proxy({{"op", "call"}, {"addr", host}, {"method", m.id}, {"label", m.label},
+                      {"body_b64", b64_encode(body)}, {"timeout_ms", timeout_ms}}, m.label, timeout_ms);
     }
-    std::string call_str(uint16_t type, const std::string &json, uint16_t expect, int timeout_ms = 15000) {
-        auto b = call(type, json, expect, timeout_ms);
+    std::string call_str(Method m, const std::string &body, int timeout_ms = 15000) {
+        auto b = call(m, body, timeout_ms);
         return std::string(b.begin(), b.end());
     }
 
-    // Whole file (<= 64 MiB) in one transaction with a single BLAKE3-verified shard.
-    void upload(const std::string &dest, const std::vector<uint8_t> &data) {
-        uint8_t tx[16];
-        std::random_device rd; for (auto &b : tx) b = (uint8_t)rd();
-        Conn c(host, xfer_port, 60000);
-
-        std::string manifest = "{\"dest_root\":\"" + json_escape(dest) + "\",\"file_count\":1,\"total_bytes\":" +
-                               std::to_string(data.size()) + ",\"total_shards\":1}";
-        std::vector<uint8_t> begin(24);
-        memcpy(begin.data(), tx, 16); put32(&begin[16], 1); put32(&begin[20], 0);
-        begin.insert(begin.end(), manifest.begin(), manifest.end());
-        c.send_frame(BEGIN_TX, begin.data(), begin.size());
-        expect_ack(c, BEGIN_TX_ACK, "start upload");
-
-        uint8_t sh[64] = {0};
-        memcpy(sh, tx, 16); put64(sh + 16, 1);
-        blake3_hasher hs; blake3_hasher_init(&hs);
-        if (!data.empty()) blake3_hasher_update(&hs, data.data(), data.size());
-        blake3_hasher_finalize(&hs, sh + 24, 32);
-        put32(sh + 56, 1); put32(sh + 60, 0);
-        c.send_frame(STREAM_SHARD, sh, 64, data.data(), data.size());
-        expect_ack(c, SHARD_ACK, "send data");
-
-        uint8_t commit[24] = {0};
-        memcpy(commit, tx, 16);
-        c.send_frame(COMMIT_TX, commit, 24);
-        expect_ack(c, COMMIT_TX_ACK, "finish upload");
+    void remove(const std::string &path) {
+        std::string body = nlohmann::json{{"path", path}}.dump();
+        proxy({{"op", "run_job"}, {"addr", host}, {"job_op", JOB_DELETE}, {"label", "FS_DELETE"},
+               {"body_b64", b64_encode(body)}, {"op_id", 0}, {"subject", path}, {"deadline_ms", 30000}}, "FS_DELETE", 30000);
     }
 
-    // Read a whole file in <= 2 MiB pieces.
+    // Whole file, up to 16 MiB (PS5 Upload sends it in pieces and commits it once).
+    void upload(const std::string &dest, const std::vector<uint8_t> &data) {
+        if (data.size() > (16u << 20)) throw Error("That file is too large to send (over 16 MB).");
+        call(FS_WRITE, nlohmann::json{{"path", dest}, {"bytes", b64_encode(data.data(), data.size())},
+                                      {"mode", "overwrite"}, {"large", true}}.dump(), 60000);
+    }
+
+    // Up to `limit` bytes from `offset`. "unsafe" lets reads reach /system_data (app.db); the
+    // payload still refuses anything outside its readable roots.
+    std::vector<uint8_t> read(const std::string &path, uint64_t offset, uint64_t limit, int timeout_ms = 20000) {
+        return call(FS_READ, nlohmann::json{{"path", path}, {"offset", offset}, {"limit", limit}, {"unsafe", true}}.dump(), timeout_ms);
+    }
     std::vector<uint8_t> read_file(const std::string &path, size_t max_total = 64u << 20) {
         std::vector<uint8_t> out;
+        const size_t piece = 8u << 20;
         for (;;) {
-            auto part = call(FS_READ, "{\"path\":\"" + json_escape(path) + "\",\"offset\":" + std::to_string(out.size()) +
-                                          ",\"limit\":2097152}", FS_READ_ACK, 20000);
-            if (part.empty()) break;
+            auto part = read(path, out.size(), piece, 60000);
             out.insert(out.end(), part.begin(), part.end());
-            if (part.size() < 2097152 || out.size() >= max_total) break;
+            if (part.size() < piece || out.size() >= max_total) break;
         }
         return out;
     }
 
-    static std::string json_escape(const std::string &s) {
-        std::string o;
-        for (char ch : s) {
-            if (ch == '"' || ch == '\\') { o += '\\'; o += ch; }
-            else if ((unsigned char)ch < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", ch); o += b; }
-            else o += ch;
-        }
-        return o;
+    // PS5 Upload's console shell (its own built-in commands; there is no real shell on a PS5).
+    nlohmann::json shell(const std::string &cmd, int timeout_ms = 30000) {
+        return nlohmann::json::parse(call_str(SHELL_EXEC, nlohmann::json{{"cmd", cmd}, {"cwd", "/"}}.dump(), timeout_ms));
     }
 
   private:
-    static void expect_ack(Conn &c, uint16_t want, const char *what) {
-        auto [ft, body] = c.recv_frame();
-        if (ft == ERROR_) throw Error(std::string("PS5 refused to ") + what + ": " + std::string(body.begin(), body.end()));
-        if (ft != want) throw Error(std::string("Unexpected reply during ") + what);
+    std::vector<uint8_t> proxy(const nlohmann::json &req, const std::string &label, int timeout_ms) {
+        auto [status, body] = http(engine_host, engine_port, "POST", "/api/mgmt/call", req.dump(), timeout_ms + 10000);
+        if (status == 404) throw Error("This version of PS5 Upload is too old for PSGFX. Update PS5 Upload to version 6 or newer.");
+        nlohmann::json j;
+        try { j = nlohmann::json::parse(body); }
+        catch (...) { throw Error("PS5 Upload refused the request (HTTP " + std::to_string(status) + "): " + body.substr(0, 300)); }
+        if (j.value("ok", false)) return b64_decode(j["result"].value("body_b64", ""));
+        auto e = j.value("error", nlohmann::json::object());
+        std::string cause = e.value("cause", e.value("message", std::string("unknown error")));
+        if (cause.find("not_paired") != std::string::npos)
+            throw Error("Your PS5 hasn't accepted PS5 Upload yet. Pair them on PS5 Upload's Connection screen, then try again.");
+        if (cause.find("helper_not_ava1") != std::string::npos)
+            throw Error("PS5 Upload's payload isn't running on the PS5 at " + host + " (or it's an old version). "
+                        "Send it from PS5 Upload's Connection screen, then try again.");
+        if (cause.find("ava1_unreachable") != std::string::npos || cause.find("did not answer") != std::string::npos)
+            throw Error("Can't reach the PS5 at " + host + ". Check the IP, and that PS5 Upload can see the console.");
+        throw Error(label + ": " + cause);
     }
 };
 
-}  // namespace ps5
+} // namespace ps5

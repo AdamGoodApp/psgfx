@@ -176,7 +176,7 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
 </head>
 <body>
 <header class="top">
-  <div class="brand"><img src="/wordmark.png" alt="PSGFX"><span>1.1</span></div>
+  <div class="brand"><img src="/wordmark.png" alt="PSGFX"><span>1.2</span></div>
   <nav class="views" aria-label="View"><button data-v="art" aria-pressed="true">Art</button><button data-v="layout" aria-pressed="false">Home layout</button></nav>
   <form class="connect" id="cf">
     <span class="dot" id="dot" aria-hidden="true"></span>
@@ -194,7 +194,7 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
   <main>
     <section class="welcome" id="welcome">
       <h1>New art for your homebrew and games.</h1>
-      <p>Make sure PS5 Upload's payload is running on your console, then enter your PS5's IP above. Pick an app or game, drop images onto the preview, and apply.</p>
+      <p>Open the PS5 Upload app on this PC (version 6 or newer) and connect it to your console, then enter your PS5's IP above. Pick an app or game, drop images onto the preview, and apply.</p>
     </section>
 
     <section id="editor" class="hidden" aria-label="Artwork editor">

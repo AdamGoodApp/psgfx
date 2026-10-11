@@ -1,8 +1,10 @@
-PSGFX 1.1
+PSGFX 1.2
 Custom icons and backgrounds for your PS5 homebrew and games, and your home-screen layout.
 
 BEFORE YOU START
  - PS5 Upload's payload must be running on your PS5 (the same setup you use to upload homebrew).
+ - The PS5 Upload app (version 6 or newer) must be open on this PC and connected
+   to your PS5. PSGFX does its work through it.
  - Your PC and PS5 must be on the same network.
 
 STEPS
