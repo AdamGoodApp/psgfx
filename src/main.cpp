@@ -32,7 +32,7 @@
 #define STUDIO_VERSION "2.0"
 // Community icons server (community-server/ in this repo). psgfx.json "community" overrides it; empty hides the feature.
 #ifndef PSGFX_COMMUNITY
-#define PSGFX_COMMUNITY ""
+#define PSGFX_COMMUNITY "https://ps5gfx.elripalda.com/"
 #endif
 
 using json = nlohmann::json;

@@ -42,7 +42,7 @@ Open `https://YOUR-DOMAIN/psgfx/list.php?title=PPSA99764` in your browser. You s
 {"ok":true,"icons":[]}
 ```
 
-Then send the address (`https://YOUR-DOMAIN/psgfx/`) so it can be built into PSGFX. Until then you can
+Then send the address (`https://YOUR-DOMAIN/psgfx/`; PSGFX 2.0 is built for `https://ps5gfx.elripalda.com/`) so it can be built into PSGFX. Until then you can
 try it yourself by adding `"community": "https://YOUR-DOMAIN/psgfx/"` to `psgfx.json` next to PSGFX.exe.
 
 ## Moderating
