@@ -16,6 +16,10 @@
   <a href="#community-icons">Community icons</a>
 </p>
 
+<p align="center">
+  <a href="https://ko-fi.com/ripalda"><img alt="Support me on Ko-fi" src="https://img.shields.io/badge/Support%20me%20on-Ko--fi-ff5e5b?style=for-the-badge&logo=ko-fi&logoColor=white"></a>
+</p>
+
 PSGFX gives your PS5 homebrew and games new home-screen art, and lets you arrange the home screen itself: hide tiles like the PlayStation Store, rename anything, move apps between Games and Media, and lock your games in the order you want. Pick an app, drop in any image, and click **Apply**. PSGFX resizes and converts it to the exact format the console expects, uploads it to the right folder, and keeps a backup of the original so you can undo it with one click.
 
 It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the PS5 Upload app open on your PC, connected to your console, and PSGFX does its work through it. There's nothing else to install: PSGFX is a single `.exe`.
@@ -125,3 +129,7 @@ If PS5 Upload's engine runs somewhere else (a NAS or Docker), add `"engine": "ho
 PSGFX is free software under the [GNU General Public License v3.0 or later](LICENSE). Versions up to 1.2 were released under the MIT License; 1.3 moved to the GPL because it includes the ATRAC9 encoder from [PS5 AT9 Converter](https://github.com/blackbearreloaded/ps5-at9-converter), which is GPL-3.0-or-later.
 
 PSGFX is an independent fan project. It is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment. "PlayStation" and "PS5" are trademarks of Sony Interactive Entertainment Inc. Only use PSGFX with games you own.
+
+## Support
+
+PSGFX is free. If it made your PS5 look the way you want, you can buy me a coffee on [Ko-fi](https://ko-fi.com/ripalda). Thank you!
