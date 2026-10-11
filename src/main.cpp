@@ -11,7 +11,6 @@
 #include "ps5client.h"
 #include "layout.h"
 #include "lib/at9/at9.h"
-#include "presets.h"
 #include "lib/json.hpp"
 
 #include <atomic>
@@ -1010,18 +1009,6 @@ static void handle(sock_t s, Req &r) {
         }
         if (r.path.rfind("/api/stage/", 0) == 0 && r.method == "POST") { respond_json(s, stage(r.path.substr(11), r.body)); return; }
         if (r.path.rfind("/api/unstage/", 0) == 0) { std::lock_guard<std::mutex> l(g_mu); g_staged.erase(r.path.substr(13)); respond_json(s, {{"ok", true}}); return; }
-        if (r.path.rfind("/api/presets/", 0) == 0) {   // /api/presets/<title id> -> the built-in icons for it
-            std::string id = r.path.substr(13);
-            json list = json::array();
-            for (size_t i = 0; i < PRESETS_COUNT; i++) if (id == PRESETS[i].title_id) list.push_back({{"i", i}, {"app", PRESETS[i].app}});
-            respond_json(s, {{"ok", true}, {"presets", list}}); return;
-        }
-        if (r.path.rfind("/api/preset/", 0) == 0) {    // /api/preset/<index>: the image; POST stages it as the icon
-            size_t i = (size_t)strtoull(r.path.c_str() + 12, nullptr, 10);
-            if (i >= PRESETS_COUNT) { respond(s, 404, "text/plain", "none", 4); return; }
-            if (r.method == "POST") { respond_json(s, stage("icon", std::vector<uint8_t>(PRESETS[i].data, PRESETS[i].data + PRESETS[i].len))); return; }
-            respond(s, 200, "image/png", PRESETS[i].data, PRESETS[i].len); return;
-        }
         if (r.path == "/api/music/clip" && r.method == "POST") { respond_json(s, music_clip(json::parse(std::string(r.body.begin(), r.body.end())))); return; }
         if (r.path == "/api/staged/music") {
             std::vector<uint8_t> b;

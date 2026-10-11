@@ -369,7 +369,6 @@ button,input,select{font:inherit;color:inherit}
 
         <div class="panel on" data-t="icon">
           <div class="card glass chroma slot" data-kind="icon"><div class="thumb"></div><div class="meta"><div class="t">Icon</div><div class="s">Square, 512 × 512 or larger</div><div class="row"><button class="btn pickf">Choose image</button><button class="btn ghost clear hidden">Remove</button></div></div></div>
-          <div class="card glass hidden" id="presets"><div class="t">Preset icons</div><div class="s" id="presetsS"></div><div class="pgrid" id="presetsRow"></div></div>
           <div class="card glass hidden" id="comm">
             <div class="chead"><div><div class="t">Community icons</div><div class="s" id="commS">Shared by other PSGFX users for this game.</div></div>
               <button class="btn" id="share" disabled title="Choose or drop an icon first, then share it">Share your icon</button></div>
@@ -613,27 +612,9 @@ async function select(a){
   $('#anote').textContent = a.kind === 'game' ? 'Close the game first. The PS5 may put back its original art when the game updates.' : 'Close the app on your PS5 before applying.';
   setTab(st.tab);
   refreshPreview(true);
-  loadPresets(a); loadCommunity(a);
+  loadCommunity(a);
 }
 
-async function loadPresets(a){
-  const box = $('#presets'), row = $('#presetsRow');
-  box.classList.add('hidden'); row.innerHTML = '';
-  let j; try { j = await api('/api/presets/' + encodeURIComponent(a.title_id)); } catch { return; }
-  if (st.sel !== a || !j.presets.length) return;
-  $('#presetsS').textContent = 'Made for ' + j.presets[0].app + '. Pick one to use it as the icon.';
-  j.presets.forEach((p, i) => {
-    const b = document.createElement('button'); b.className = 'pick'; b.style.setProperty('--i', i);
-    b.style.backgroundImage = `url(/api/preset/${p.i})`; b.title = p.app + ' preset ' + (i + 1);
-    b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', 'false');
-    b.onclick = async () => {
-      try { const r = await api('/api/preset/' + p.i, {method:'POST'}); st.staged.icon = {note: r.note || ''}; markPick(b); refreshPreview(false); }
-      catch (err) { $('#presetsS').textContent = err.message; }
-    };
-    row.appendChild(b);
-  });
-  box.classList.remove('hidden');
-}
 const markPick = b => { document.querySelectorAll('.pick').forEach(x => x.setAttribute('aria-pressed', 'false')); b?.setAttribute('aria-pressed', 'true'); };
 
 // ── Community icons (community-server/ on the PSGFX site, saved to GitHub) ──
