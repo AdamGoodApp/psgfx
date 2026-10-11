@@ -3,7 +3,17 @@
 </p>
 
 <p align="center">
-  <a href="../../releases/latest"><b>Download PSGFX for Windows</b></a>
+  <a href="https://github.com/elripalda/psgfx/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/elripalda/psgfx?label=release&color=3b8cff"></a>
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-1f5fd6">
+  <img alt="For jailbroken PS5" src="https://img.shields.io/badge/for-jailbroken%20PS5-5cd3ff">
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-a9a6ff"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/elripalda/psgfx/releases/latest"><b>Download PSGFX 2.0</b></a> ·
+  <a href="#how-to-use">How to use</a> ·
+  <a href="#home-layout">Home layout</a> ·
+  <a href="#community-icons">Community icons</a>
 </p>
 
 PSGFX gives your PS5 homebrew and games new home-screen art, and lets you arrange the home screen itself: hide tiles like the PlayStation Store, rename anything, move apps between Games and Media, and lock your games in the order you want. Pick an app, drop in any image, and click **Apply**. PSGFX resizes and converts it to the exact format the console expects, uploads it to the right folder, and keeps a backup of the original so you can undo it with one click.
