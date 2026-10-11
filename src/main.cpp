@@ -10,6 +10,7 @@
 #include "imaging.h"
 #include "ps5client.h"
 #include "layout.h"
+#include "lib/at9/at9.h"
 #include "lib/json.hpp"
 
 #include <atomic>
@@ -27,7 +28,7 @@
 #include <shellapi.h>
 #include <tlhelp32.h>
 #endif
-#define STUDIO_VERSION "1.2"
+#define STUDIO_VERSION "1.3"
 
 using json = nlohmann::json;
 
@@ -40,6 +41,11 @@ struct Staged {                 // the user's image, decoded; converted per targ
     img::Image src;
     std::vector<uint8_t> preview_png;
     std::string note;
+    // Music: the decoded file, the clip settings, and the snd0.at9 made from them.
+    at9::Audio audio;
+    at9::Options opt;
+    at9::Result enc;
+    std::vector<uint8_t> preview_wav;
 };
 static std::mutex g_mu;
 static std::string g_ip;
@@ -385,7 +391,52 @@ static std::vector<uint8_t> fetch_background(const std::string &id, const std::s
     return {};
 }
 
+static std::string secs(double v) { char b[32]; snprintf(b, sizeof b, "%d:%02d", (int)v / 60, (int)v % 60); return b; }
+
+// Cuts, levels and encodes the clip; the result is what Apply uploads, so size problems show up now.
+static void encode_music(Staged &s) {
+    s.enc = at9::make_snd0(s.audio, s.opt);
+    s.preview_wav = at9::wav_bytes(s.enc.processed);
+    double total = (double)s.audio.pcm.size() / std::max(1, s.audio.channels) / std::max(1, s.audio.rate);
+    s.note = "";
+    if (s.opt.start_sec + 0.5 >= total) s.note = "The start is past the end of the song.";
+}
+static json music_json(const Staged &s) {
+    double total = (double)s.audio.pcm.size() / std::max(1, s.audio.channels) / std::max(1, s.audio.rate);
+    return {{"ok", true}, {"note", s.note}, {"seconds", s.enc.seconds}, {"total", total}, {"kb", (int)(s.enc.at9.size() / 1024)},
+            {"start", s.opt.start_sec}, {"duration", s.opt.duration_sec},
+            {"summary", secs(s.opt.start_sec) + " to " + secs(s.opt.start_sec + s.enc.seconds) + ", " + std::to_string(s.enc.at9.size() / 1024) + " KB"}};
+}
+static json stage_music(const std::vector<uint8_t> &bytes) {
+    Staged s;
+    std::string err;
+    if (!at9::decode_file(bytes, s.audio, err)) throw ps5::Error("That file isn't an MP3, WAV or FLAC PSGFX can read" + (err.empty() ? std::string(".") : " (" + err + ")."));
+    encode_music(s);
+    json j = music_json(s);
+    std::lock_guard<std::mutex> l(g_mu);
+    g_staged["music"] = std::move(s);
+    return j;
+}
+// Start (seconds) and length (seconds; 0 = the longest that fits in the PS5's 2 MB limit).
+static json music_clip(const json &req) {
+    Staged s;
+    {
+        std::lock_guard<std::mutex> l(g_mu);
+        auto it = g_staged.find("music");
+        if (it == g_staged.end()) throw ps5::Error("Add a song first.");
+        s = it->second;
+    }
+    s.opt.start_sec = std::max(0.0, req.value("start", s.opt.start_sec));
+    s.opt.duration_sec = std::max(0.0, req.value("duration", s.opt.duration_sec));
+    encode_music(s);
+    json j = music_json(s);
+    std::lock_guard<std::mutex> l(g_mu);
+    g_staged["music"] = std::move(s);
+    return j;
+}
+
 static json stage(const std::string &kind, const std::vector<uint8_t> &bytes) {
+    if (kind == "music") return stage_music(bytes);
     Staged s;
     if (!img::decode(bytes, s.src)) throw ps5::Error("That file isn't a PNG or JPEG image.");
     const img::Image &src = s.src;
@@ -408,8 +459,9 @@ static json stage(const std::string &kind, const std::vector<uint8_t> &bytes) {
 // A file on the PS5 we're going to replace, and the format it has to stay in.
 struct Target { std::string name; bool dds = false; int w = 0, h = 0; };
 
-static std::vector<uint8_t> encode_for(const std::string &kind, const img::Image &src, const Target &t) {
-    img::Image im = img::cover(src, t.w, t.h);
+static std::vector<uint8_t> encode_for(const std::string &kind, const Staged &s, const Target &t) {
+    if (kind == "music") return s.enc.at9;
+    img::Image im = img::cover(s.src, t.w, t.h);
     img::opaque(im);
     return t.dds ? img::to_bc7_dds(im) : img::to_png(im);
 }
@@ -418,6 +470,7 @@ static std::vector<uint8_t> encode_for(const std::string &kind, const img::Image
 static std::vector<Target> homebrew_targets(const std::string &kind) {
     if (kind == "icon") return {{"icon0.png", false, 512, 512}};
     if (kind == "background") return {{"pic0.dds", true, 3840, 2160}, {"pic1.dds", true, 3840, 2160}};
+    if (kind == "music") return {{"snd0.at9"}};
     return {};
 }
 
@@ -426,6 +479,7 @@ static std::vector<Target> homebrew_targets(const std::string &kind) {
 static std::vector<Target> game_targets(ps5::Client &c, const std::string &id, const std::string &kind,
                                         json &log, std::vector<std::string> &seen) {
     std::vector<Target> out;
+    if (kind == "music") return {{"snd0.at9"}};   // added when the game has none; backed up when it has one
     for (auto &e : list_dir(c, appmeta(id))) {
         std::string name = e.value("name", ""), ln = lower(name);
         std::string ek = e.value("kind", "");
@@ -505,6 +559,13 @@ static void sync_home(ps5::Client &c, const std::string &id, const std::string &
 // Restore, and the database is backed up first, as Home layout does.
 static const char *const ORIGINALS = "psgfx_original.json";
 static std::string art_column(const std::string &kind) { return kind == "icon" ? "icon0Info" : "pic0Info"; }
+// The column holding a title's selection-music path, if this database has one (snd0Info or similar).
+static std::string music_column(const layout::Info &info) {
+    auto it = info.cols.find(info.concept_t);
+    if (it == info.cols.end()) return "";
+    for (auto &c : it->second) if (lower(c).find("snd0") != std::string::npos) return c;
+    return "";
+}
 
 // Size and format from an image's first bytes; false if it isn't a PNG or DDS we can match.
 static bool probe_art(const std::vector<uint8_t> &h, Target &t) {
@@ -576,7 +637,8 @@ static std::set<std::string> game_apply_db(ps5::Client &c, const std::string &id
     json originals = read_originals(c, id);
     std::vector<std::string> replaced;   // our older files, deleted once the database points away from them
     for (auto &[kind, s] : staged) {
-        const std::string col = art_column(kind);
+        const std::string col = kind == "music" ? music_column(info) : art_column(kind);
+        if (col.empty()) continue;
         std::string value = db.scalar_str("SELECT " + layout::q(col) + " FROM " + layout::q(info.concept_t) + " WHERE localConceptId=?", {concept});
         std::string path = layout::strip_query(value);
         if (path.empty() || path[0] != '/') continue;
@@ -588,15 +650,21 @@ static std::set<std::string> game_apply_db(ps5::Client &c, const std::string &id
             if (regular) continue;
         }
         Target t;
-        if (!probe_art(read_head(c, path), t)) {
-            t.dds = ends_with(lower(base), ".dds");
-            t.w = kind == "icon" ? 512 : t.dds ? 3840 : 1920;
-            t.h = kind == "icon" ? 512 : t.dds ? 2160 : 1080;
+        if (kind == "music") {
+            t.name = "psgfx_snd0_" + now_stamp("%Y%m%d%H%M%S") + ".at9";
+            c.upload(dir + "/" + t.name, encode_for(kind, s, t));
+            log.push_back("Uploaded " + t.name + " (" + std::to_string(s.enc.at9.size() / 1024) + " KB)");
+        } else {
+            if (!probe_art(read_head(c, path), t)) {
+                t.dds = ends_with(lower(base), ".dds");
+                t.w = kind == "icon" ? 512 : t.dds ? 3840 : 1920;
+                t.h = kind == "icon" ? 512 : t.dds ? 2160 : 1080;
+            }
+            std::string stem = kind == "icon" ? "icon0" : "pic0";
+            t.name = "psgfx_" + stem + "_" + now_stamp("%Y%m%d%H%M%S") + (t.dds ? ".dds" : ".png");
+            c.upload(dir + "/" + t.name, encode_for(kind, s, t));
+            log.push_back("Uploaded " + t.name + " (" + std::to_string(t.w) + "x" + std::to_string(t.h) + ")");
         }
-        std::string stem = kind == "icon" ? "icon0" : "pic0";
-        t.name = "psgfx_" + stem + "_" + now_stamp("%Y%m%d%H%M%S") + (t.dds ? ".dds" : ".png");
-        c.upload(dir + "/" + t.name, encode_for(kind, s.src, t));
-        log.push_back("Uploaded " + t.name + " (" + std::to_string(t.w) + "x" + std::to_string(t.h) + ")");
         if (!originals.contains(col)) originals[col] = value;
         if (ours) replaced.push_back(dir + "/" + base);
         size_t qp = value.find('?');
@@ -633,12 +701,30 @@ static bool game_restore_db(ps5::Client &c, const std::string &id, json &log) {
     return true;
 }
 
+// The home screen plays snd0.at9 at the level param.json gives in pubtools.loudnessSnd0.
+static void set_music_loudness(ps5::Client &c, const std::string &param_path, const std::string &value, json &log) {
+    if (value.empty() || value.find("inf") != std::string::npos) return;   // a silent clip has no level
+    try {
+        auto b = c.read_file(param_path, 1u << 20);
+        auto j = nlohmann::ordered_json::parse(b.begin(), b.end());
+        if (!j.contains("pubtools") || !j["pubtools"].is_object()) j["pubtools"] = nlohmann::ordered_json::object();
+        if (j["pubtools"].value("loudnessSnd0", std::string()) == value) return;
+        j["pubtools"]["loudnessSnd0"] = value;
+        std::string out = j.dump(2);
+        c.upload(param_path, std::vector<uint8_t>(out.begin(), out.end()));
+        log.push_back("Set the music level in " + param_path.substr(param_path.find_last_of('/') + 1) + " (" + value + " LUFS)");
+    } catch (const std::exception &e) {
+        log.push_back(std::string("Couldn't set the music level in param.json (") + e.what() + "); the music may play louder or quieter than intended.");
+    }
+}
+
 static json do_apply(const std::string &id, const std::string &src, std::string kind_of_app) {
     if (mounted_image(src)) kind_of_app = "game";
     json log = json::array();
     std::map<std::string, Staged> staged;
     { std::lock_guard<std::mutex> l(g_mu); staged = g_staged; }
-    if (staged.empty()) throw ps5::Error("Add at least one image first.");
+    if (staged.empty()) throw ps5::Error("Add an image or a song first.");
+    const bool music = staged.count("music") > 0;
     auto c = client();
 
     if (kind_of_app == "game") {
@@ -649,11 +735,16 @@ static json do_apply(const std::string &id, const std::string &src, std::string 
             if (via_db.count(kind)) continue;
             auto targets = game_targets(c, id, kind, log, seen);
             if (targets.empty()) log.push_back(std::string("This game has no ") + (kind == "icon" ? "icon" : "background") + " file this tool can replace.");
+            if (kind == "music" && exists(c, appmeta(id), "param.json")) {
+                backup_once(c, appmeta(id), "param.json", log);
+                set_music_loudness(c, appmeta(id) + "/param.json", s.enc.loudness_param, log);
+            }
             for (auto &t : targets) {
                 backup_once(c, appmeta(id), t.name, log);
-                auto bytes = encode_for(kind, s.src, t);
+                auto bytes = encode_for(kind, s, t);
                 c.upload(appmeta(id) + "/" + t.name, bytes);
-                log.push_back("Replaced " + t.name + " (" + std::to_string(t.w) + "x" + std::to_string(t.h) + ")");
+                log.push_back(kind == "music" ? "Uploaded " + t.name + " (" + std::to_string(bytes.size() / 1024) + " KB)"
+                                              : "Replaced " + t.name + " (" + std::to_string(t.w) + "x" + std::to_string(t.h) + ")");
                 written++;
             }
         }
@@ -664,7 +755,7 @@ static json do_apply(const std::string &id, const std::string &src, std::string 
             for (auto &n : log) notes += " " + n.get<std::string>();
             throw ps5::Error("Nothing was changed. Files in this game's art folder: " + (list.empty() ? std::string("(none)") : list) + "." + notes);
         }
-        log.push_back("Done. Restart the PS5 to see the new art.");
+        log.push_back(music ? "Done. Restart the PS5 to see and hear the change." : "Done. Restart the PS5 to see the new art.");
     } else {
         if (src.empty()) throw ps5::Error("This app's folder is unknown.");
         const std::string dir = src + "/sce_sys";
@@ -673,10 +764,14 @@ static json do_apply(const std::string &id, const std::string &src, std::string 
             for (auto &t : homebrew_targets(kind)) {
                 changed.push_back(t.name);
                 backup_once(c, dir, t.name, log);
-                auto bytes = encode_for(kind, s.src, t);
+                auto bytes = encode_for(kind, s, t);
                 c.upload(dir + "/" + t.name, bytes);
                 log.push_back("Uploaded " + t.name + " (" + std::to_string(bytes.size() / 1024) + " KB)");
             }
+        }
+        if (music) {   // not backed up: it also holds a rename, and the level is harmless without the music
+            set_music_loudness(c, dir + "/param.json", staged["music"].enc.loudness_param, log);
+            changed.push_back("param.json");
         }
         sync_home(c, id, src, changed, log);
     }
@@ -869,6 +964,13 @@ static void handle(sock_t s, Req &r) {
         }
         if (r.path.rfind("/api/stage/", 0) == 0 && r.method == "POST") { respond_json(s, stage(r.path.substr(11), r.body)); return; }
         if (r.path.rfind("/api/unstage/", 0) == 0) { std::lock_guard<std::mutex> l(g_mu); g_staged.erase(r.path.substr(13)); respond_json(s, {{"ok", true}}); return; }
+        if (r.path == "/api/music/clip" && r.method == "POST") { respond_json(s, music_clip(json::parse(std::string(r.body.begin(), r.body.end())))); return; }
+        if (r.path == "/api/staged/music") {
+            std::vector<uint8_t> b;
+            { std::lock_guard<std::mutex> l(g_mu); auto it = g_staged.find("music"); if (it != g_staged.end()) b = it->second.preview_wav; }
+            if (b.empty()) { respond(s, 404, "text/plain", "none", 4); return; }
+            respond(s, 200, "audio/wav", b.data(), b.size()); return;
+        }
         if (r.path.rfind("/api/staged/", 0) == 0) {
             std::vector<uint8_t> b;
             { std::lock_guard<std::mutex> l(g_mu); auto it = g_staged.find(r.path.substr(12)); if (it != g_staged.end()) b = it->second.preview_png; }

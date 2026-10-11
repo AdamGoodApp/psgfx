@@ -18,8 +18,9 @@ It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the
 - **Custom backgrounds.** Any 16:9 image becomes the backdrop behind the app on the home screen. Homebrew gets full 4K backgrounds.
 - **Homebrew and installed games.** Homebrew apps registered with PS5 Upload show up with their icons, and so do your installed PS4 and PS5 games, with their real names.
 - **Live preview.** A replica of the PS5 home screen shows your art before anything touches the console. Drop an image on the tile to set the icon, or anywhere else to set the background.
+- **Home-screen music (new in 1.3).** Drop an MP3, WAV or FLAC on an app or game, pick where the clip starts and how long it runs, and listen to it before applying. PSGFX converts it to the PS5's own format (`snd0.at9`, ATRAC9), levels it like official games, and loops it while the tile is selected. Clips can run up to about 85 seconds, the most the PS5's 2 MB limit allows.
 - **Rename from the Art view.** Change a homebrew app's or game's home-screen name right next to its art. For homebrew, PSGFX also updates the name in the app's `param.json` so changing its art later keeps the new name.
-- **One-click restore.** The first time you change something, PSGFX saves the original next to it. **Restore original art** puts it back exactly.
+- **One-click restore.** The first time you change something, PSGFX saves the original next to it. **Restore original** puts it back exactly.
 - **Clean list.** System apps and leftovers are tucked away under *Show other items*.
 - **Home layout (new in 1.1).** Hide any tile (PlayStation Store, Game Library, PS Plus, media apps), rename games and apps, move apps between the Games and Media tabs, and reorder your games by dragging or with A–Z / Z–A.
 - **Lock order.** Keeps your arrangement in place even after you play other games.
@@ -43,7 +44,7 @@ It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the
 6. Close that app or game on the PS5, then click **Apply to PS5**.
 7. Restart the PS5 to see the new art on the home screen.
 
-To undo, select the app and click **Restore original art**.
+To undo, select the app and click **Restore original**.
 
 ### Home layout
 
@@ -82,7 +83,7 @@ On Windows, run `./build.sh` from an [MSYS2](https://www.msys2.org/) MinGW shell
 
 ### How it works
 
-PSGFX runs a small local web server (127.0.0.1 only) and opens your browser to it. PS5 Upload 6.0 replaced its old protocol (FTX2, ports 9113 and 9114) with AVA1, an encrypted connection on port 9120 that the console only opens to an app it has paired with. So PSGFX doesn't talk to the console itself: it sends each command to the PS5 Upload app's local engine (`POST http://127.0.0.1:19113/api/mgmt/call`), which runs it over its paired connection. It uses the payload's existing commands to list apps, read and write files, and back up. Homebrew art is written to the app's `sce_sys` folder and to the home-screen metadata folder. Game art is written to `/user/appmeta/<title id>` in the same size and format as the original files. When the home-screen database (`app.db`) shows the game's tile art coming from somewhere PSGFX can't write, such as inside the game's own package, PSGFX writes the image to `/user/appmeta/<title id>/psgfx_*` and points the database at it. It keeps the original paths in `psgfx_original.json` for **Restore original art** and backs up the database first, as Home layout does. Backgrounds are encoded as BC7 DDS where the console uses DDS.
+PSGFX runs a small local web server (127.0.0.1 only) and opens your browser to it. PS5 Upload 6.0 replaced its old protocol (FTX2, ports 9113 and 9114) with AVA1, an encrypted connection on port 9120 that the console only opens to an app it has paired with. So PSGFX doesn't talk to the console itself: it sends each command to the PS5 Upload app's local engine (`POST http://127.0.0.1:19113/api/mgmt/call`), which runs it over its paired connection. It uses the payload's existing commands to list apps, read and write files, and back up. Homebrew art is written to the app's `sce_sys` folder and to the home-screen metadata folder. Game art is written to `/user/appmeta/<title id>` in the same size and format as the original files. When the home-screen database (`app.db`) shows the game's tile art coming from somewhere PSGFX can't write, such as inside the game's own package, PSGFX writes the image to `/user/appmeta/<title id>/psgfx_*` and points the database at it. It keeps the original paths in `psgfx_original.json` for **Restore original** and backs up the database first, as Home layout does. Backgrounds are encoded as BC7 DDS where the console uses DDS. Music becomes `snd0.at9` (ATRAC9, 48 kHz stereo, 192 kb/s, looped), written to the app's `sce_sys` folder for homebrew and to `/user/appmeta/<title id>` for games, with its loudness in `param.json` (`pubtools.loudnessSnd0`).
 
 `tools/mock_engine.py` is a stand-in for the PS5 Upload engine and console that serves a folder on your computer as if it were a PS5. Use it to develop without a console:
 
@@ -96,10 +97,11 @@ If PS5 Upload's engine runs somewhere else (a NAS or Docker), add `"engine": "ho
 ## Credits
 
 - [PS5 Upload](https://github.com/phantomptr/ps5upload) by phantomptr, whose app and payload PSGFX works through
+- [PS5 AT9 Converter](https://github.com/blackbearreloaded/ps5-at9-converter) by BlackBearReloaded, whose ATRAC9 encoder PSGFX's music feature is ported from, and [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9) by Alex Barney
 - [bc7enc](https://github.com/richgel999/bc7enc) by Rich Geldreich, [stb](https://github.com/nothings/stb) by Sean Barrett, [BLAKE3](https://github.com/BLAKE3-team/BLAKE3), [JSON for Modern C++](https://github.com/nlohmann/json) by Niels Lohmann, and the [Sora](https://github.com/sora-xor/sora-font) typeface. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
-[MIT](LICENSE).
+PSGFX is free software under the [GNU General Public License v3.0 or later](LICENSE). Versions up to 1.2 were released under the MIT License; 1.3 moved to the GPL because it includes the ATRAC9 encoder from [PS5 AT9 Converter](https://github.com/blackbearreloaded/ps5-at9-converter), which is GPL-3.0-or-later.
 
 PSGFX is an independent fan project. It is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment. "PlayStation" and "PS5" are trademarks of Sony Interactive Entertainment Inc. Only use PSGFX with games you own.

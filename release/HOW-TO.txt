@@ -1,4 +1,4 @@
-PSGFX 1.2
+PSGFX 1.3
 Custom icons and backgrounds for your PS5 homebrew and games, and your home-screen layout.
 
 BEFORE YOU START
@@ -18,8 +18,13 @@ STEPS
  5. Close that app or game on the PS5, then click "Apply to PS5".
  6. Restart the PS5 to see the new art.
 
+MUSIC (new in 1.3)
+ - Drop an MP3, WAV or FLAC on the preview, or use "Choose song".
+ - Set where it starts and how long it runs, listen to it, then Apply.
+ - It plays when the app's or game's tile is selected. Restart the PS5 to hear it.
+
 UNDO
- - Select the app and click "Restore original art".
+ - Select the app and click "Restore original".
 
 HOME LAYOUT (new in 1.1)
  1. Connect, then click "Home layout" at the top.

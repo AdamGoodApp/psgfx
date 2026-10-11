@@ -82,6 +82,14 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
 .slot{background:var(--glass);border:1px solid var(--line);border-radius:var(--r-md);padding:14px;display:flex;gap:12px;align-items:center;min-height:92px}
 .slot .thumb{width:64px;height:64px;border-radius:10px;background:var(--bg2) center/cover no-repeat;flex:none;border:1px solid var(--line)}
 .slot.bgslot .thumb{width:96px;height:54px}
+.slot.musicslot{grid-column:1/-1;flex-wrap:wrap}
+.slot.musicslot .thumb{display:grid;place-items:center;font-size:26px;color:var(--muted)}
+.mclip{display:none;gap:10px;align-items:center;flex-wrap:wrap;width:100%;margin-top:4px}
+.mclip.on{display:flex}
+.mclip label{color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center}
+.mclip input,.mclip select{padding:5px 8px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--glass);color:var(--text);font-size:12px}
+.mclip input{width:70px}
+.mclip audio{height:32px;flex:1;min-width:220px}
 .slot .meta{min-width:0;flex:1}
 .slot .t{font-weight:600}
 .slot .s{color:var(--muted);font-size:12px}
@@ -176,7 +184,7 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
 </head>
 <body>
 <header class="top">
-  <div class="brand"><img src="/wordmark.png" alt="PSGFX"><span>1.2</span></div>
+  <div class="brand"><img src="/wordmark.png" alt="PSGFX"><span>1.3</span></div>
   <nav class="views" aria-label="View"><button data-v="art" aria-pressed="true">Art</button><button data-v="layout" aria-pressed="false">Home layout</button></nav>
   <form class="connect" id="cf">
     <span class="dot" id="dot" aria-hidden="true"></span>
@@ -208,7 +216,7 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
         <div class="titlezone"><div class="tname" id="tname"></div></div>
         <div class="play" aria-hidden="true">Play</div>
         <div class="staged-badge" id="badge">Preview - not applied yet</div>
-        <div class="stage-hint">Drop an image on the tile or the background</div>
+        <div class="stage-hint">Drop an image on the tile or the background, or a song anywhere</div>
         <div class="drop d-bg" data-kind="background">Background</div>
         <div class="drop d-icon" data-kind="icon">Icon</div>
       </div>
@@ -218,11 +226,18 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
       <div class="slots" style="margin-top:20px">
         <div class="slot" data-kind="icon"><div class="thumb"></div><div class="meta"><div class="t">Icon</div><div class="s">Square, 512 × 512 or larger</div><div class="row"><button class="btn pick">Choose image</button><button class="btn clear hidden">Remove</button></div></div></div>
         <div class="slot bgslot" data-kind="background"><div class="thumb"></div><div class="meta"><div class="t">Background</div><div class="s">16:9, ideally 3840 × 2160</div><div class="row"><button class="btn pick">Choose image</button><button class="btn clear hidden">Remove</button></div></div></div>
+        <div class="slot musicslot" data-kind="music"><div class="thumb" aria-hidden="true">&#9835;</div><div class="meta"><div class="t">Music</div><div class="s">MP3, WAV or FLAC. Plays when the tile is selected.</div><div class="row"><button class="btn pick">Choose song</button><button class="btn clear hidden">Remove</button></div></div>
+          <div class="mclip" id="mclip">
+            <label>Start <input id="mstart" value="0:00" inputmode="numeric" title="Where the clip starts in the song (m:ss)"></label>
+            <label>Length <select id="mlen"><option value="15">15 s</option><option value="30">30 s</option><option value="60">60 s</option><option value="0">Longest that fits</option></select></label>
+            <audio id="maudio" controls preload="none"></audio>
+          </div>
+        </div>
       </div>
 
       <div class="actions" style="margin-top:20px">
         <button class="btn primary" id="apply" disabled>Apply to PS5</button>
-        <button class="btn" id="restore">Restore original art</button>
+        <button class="btn" id="restore">Restore original</button>
         <span class="note" id="anote">Close the app on your PS5 before applying.</span>
       </div>
       <ul class="log" id="log"></ul>
@@ -273,11 +288,13 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
 <div class="scrim" id="dlg"><div class="dlg" id="dlgBody"></div></div>
 <div class="busyv" id="busyv"><span id="busyT">Working…</span></div>
 <input type="file" id="file" accept="image/png,image/jpeg" hidden>
+<input type="file" id="afile" accept=".mp3,.wav,.flac,.aif,.aiff,audio/*" hidden>
 
 <script>
 const $ = s => document.querySelector(s);
 const st = { apps: [], sel: null, staged: {} };
-const KINDS = ['icon','background'];
+const KINDS = ['icon','background','music'];
+const HINT = {icon:'Square, 512 × 512 or larger', background:'16:9, ideally 3840 × 2160', music:'MP3, WAV or FLAC. Plays when the tile is selected.'};
 
 async function api(path, opts={}) {
   const r = await fetch(path, opts);
@@ -362,13 +379,17 @@ function refreshPreview(loadCurrent){
     bg.src = '/api/current/'+encodeURIComponent(a.title_id)+'?src='+encodeURIComponent(a.src)+'&t='+t; }
   document.querySelectorAll('.slot').forEach(sl => {
     const k = sl.dataset.kind, s = st.staged[k];
-    sl.querySelector('.thumb').style.backgroundImage = s ? `url(/api/staged/${k}?t=${t})` : '';
+    if (k !== 'music') sl.querySelector('.thumb').style.backgroundImage = s ? `url(/api/staged/${k}?t=${t})` : '';
     sl.querySelector('.clear').classList.toggle('hidden', !s);
     const sEl = sl.querySelector('.s');
     if (s && s.note) { sEl.textContent = s.note; sEl.classList.add('warn'); }
-    else if (s) { sEl.textContent = 'Ready to apply'; sEl.classList.remove('warn'); }
-    else { sEl.textContent = {icon:'Square, 512 × 512 or larger',background:'16:9, ideally 3840 × 2160'}[k]; sEl.classList.remove('warn'); }
+    else if (s) { sEl.textContent = s.summary ? 'Ready to apply: ' + s.summary : 'Ready to apply'; sEl.classList.remove('warn'); }
+    else { sEl.textContent = HINT[k]; sEl.classList.remove('warn'); }
   });
+  const m = st.staged.music;
+  $('#mclip').classList.toggle('on', !!m);
+  if (m && m.fresh) { $('#maudio').src = '/api/staged/music?t='+t; m.fresh = false; }
+  if (!m) $('#maudio').removeAttribute('src');
   updateApply();
 }
 const newName = () => { const v = $('#aname').value.trim(); return v && v !== (st.sel.title_name || st.sel.title_id) ? v : null; };
@@ -383,15 +404,35 @@ async function stage(kind, file){
   const sl = document.querySelector(`.slot[data-kind="${kind}"] .s`);
   sl.textContent = 'Loading…'; sl.classList.remove('warn');
   try {
+    if (kind === 'music') sl.textContent = 'Converting… this takes a few seconds.';
     const j = await api('/api/stage/'+kind, {method:'POST', body: await file.arrayBuffer()});
-    st.staged[kind] = {note: j.note || ''};
+    st.staged[kind] = {note: j.note || '', summary: j.summary || '', fresh: true};
+    if (kind === 'music') { $('#mstart').value = fmtTime(j.start); $('#mlen').value = String(j.duration); }
   } catch (err) { sl.textContent = err.message; sl.classList.add('warn'); return; }
   refreshPreview(false);
 }
 
+const fmtTime = v => Math.floor(v/60) + ':' + String(Math.floor(v%60)).padStart(2,'0');
+const parseTime = v => { const p = String(v).trim().split(':').map(Number); if (p.some(isNaN)) return 0; return p.length > 1 ? p[0]*60 + p[1] : p[0]; };
+async function reclip(){
+  const sl = document.querySelector('.slot[data-kind="music"] .s');
+  sl.textContent = 'Converting…'; sl.classList.remove('warn');
+  try {
+    const j = await api('/api/music/clip', {method:'POST', body: JSON.stringify({start: parseTime($('#mstart').value), duration: Number($('#mlen').value)})});
+    st.staged.music = {note: j.note || '', summary: j.summary || '', fresh: true};
+    $('#mstart').value = fmtTime(j.start);
+  } catch (err) { sl.textContent = err.message; sl.classList.add('warn'); return; }
+  refreshPreview(false);
+}
+$('#mstart').addEventListener('change', reclip); $('#mlen').addEventListener('change', reclip);
+$('#afile').onchange = e => { const f = e.target.files[0]; if (f) stage('music', f); };
+const isAudio = f => /^audio\//.test(f.type) || /\.(mp3|wav|flac|aiff?)$/i.test(f.name);
+
 let pickKind = null;
 document.querySelectorAll('.slot').forEach(sl => {
-  sl.querySelector('.pick').onclick = () => { pickKind = sl.dataset.kind; $('#file').value=''; $('#file').click(); };
+  sl.querySelector('.pick').onclick = () => {
+    if (sl.dataset.kind === 'music') { $('#afile').value=''; $('#afile').click(); return; }
+    pickKind = sl.dataset.kind; $('#file').value=''; $('#file').click(); };
   sl.querySelector('.clear').onclick = async () => { await api('/api/unstage/'+sl.dataset.kind); delete st.staged[sl.dataset.kind]; refreshPreview(true); };
 });
 $('#file').onchange = e => { const f = e.target.files[0]; if (f && pickKind) stage(pickKind, f); };
@@ -411,7 +452,7 @@ stageEl.addEventListener('dragover', e => {
 });
 stageEl.addEventListener('drop', e => {
   e.preventDefault(); dragDepth=0; stageEl.classList.remove('dragging');
-  const f = e.dataTransfer.files[0]; if (f) stage(zoneAt(e.clientX, e.clientY), f);
+  const f = e.dataTransfer.files[0]; if (f) stage(isAudio(f) ? 'music' : zoneAt(e.clientX, e.clientY), f);
 });
 window.addEventListener('dragover', e => e.preventDefault()); window.addEventListener('drop', e => e.preventDefault());
 
@@ -436,7 +477,7 @@ $('#apply').onclick = async () => {
   if (artDone) refreshPreview(true); else updateApply();
 };
 $('#restore').onclick = async () => {
-  const a = st.sel; showLog(['Restoring original art…'], '');
+  const a = st.sel; showLog(['Restoring the original art and music…'], '');
   try {
     const j = await api('/api/restore', {method:'POST', body: JSON.stringify({title_id:a.title_id, src:a.src, kind:a.kind})});
     showLog(j.log, 'ok'); refreshPreview(true);

@@ -9,7 +9,7 @@ mkdir -p build
 
 BLAKE3_FLAGS="-O2 -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512"
 SQLITE_FLAGS="-O2 -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0"
-SOURCES="src/main.cpp src/ui.cpp src/assets_embed.cpp src/lib/bc7enc.cpp src/lib/bc7decomp.cpp"
+SOURCES="src/main.cpp src/ui.cpp src/assets_embed.cpp src/lib/bc7enc.cpp src/lib/bc7decomp.cpp src/lib/at9/at9_encoder.cpp src/lib/at9/at9_snd0.cpp src/lib/at9/at9_decode.cpp src/lib/at9/at9_tables.cpp"
 
 if [[ "${1:-}" == "linux" ]]; then
   for f in src/lib/blake3.c src/lib/blake3_dispatch.c src/lib/blake3_portable.c; do
