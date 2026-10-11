@@ -14,6 +14,8 @@ It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the
 
 ## Features
 
+- **New look (2.0).** A redesigned, larger glass interface with smooth animations, and a home-screen preview that slides between tiles like the console does.
+- **Community icons (new in 2.0).** Browse icons other PSGFX users made for the game you picked and use one in a click, or share yours. Shared icons are stored in a public GitHub repository and moderated.
 - **Custom icons.** Use any PNG or JPEG. PSGFX crops it to a square and saves it at the console's native size.
 - **Custom backgrounds.** Any 16:9 image becomes the backdrop behind the app on the home screen. Homebrew gets full 4K backgrounds.
 - **Homebrew and installed games.** Homebrew apps registered with PS5 Upload show up with their icons, and so do your installed PS4 and PS5 games, with their real names.
@@ -38,7 +40,7 @@ It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the
 
 1. Download `PSGFX.exe` from the [latest release](../../releases/latest) and double-click it. PSGFX opens in your browser.
 2. Open PS5 Upload and make sure it's connected to your PS5.
-3. Enter your PS5's IP address (the same one PS5 Upload uses) and click **Connect**.
+3. PSGFX asks for your PS5's IP address (the same one PS5 Upload uses). Enter it and click **Connect**. Next time it connects by itself.
 4. Choose a homebrew app or an installed game from the list.
 5. Drop an image onto the preview's tile (**icon**) or background (**background**), or use the **Choose image** buttons.
 6. Close that app or game on the PS5, then click **Apply to PS5**.
@@ -49,11 +51,17 @@ To undo, select the app and click **Restore original**.
 ### Home layout
 
 1. Connect, then click **Home layout** at the top.
-2. Pick a tile in the strip under the preview. Choose **Games**, **Media** or **Hidden**, or type a new name.
+2. Pick a tile in the strip under the preview. Choose **Games**, **Media** or **Hidden**, or type a new name. When a tile leaves the tab you're on, the next one is selected so you can keep going, and **Undo** brings it back.
 3. Drag games into any order, or use **A–Z** / **Z–A**. Tick **Lock order** to keep it that way after you play other games.
 4. Click **Apply to PS5**, optionally saving the layout as a preset, then restart the PS5.
 
 PSGFX edits the console's home-screen database (`/system_data/priv/mms/app.db`) through PS5 Upload. It uploads the new database to `/data/psgfx` and has PS5 Upload's console shell copy it into place, then reads it back to check it. Backups and presets are kept in the **PSGFX Layout** folder next to `PSGFX.exe`. If the home screen ever looks wrong, restore a backup, or use Safe Mode → **Rebuild Database**. App Library always comes back on its own; the system adds it regardless of the database.
+
+### Community icons
+
+Pick an app or game: the **Icon** tab shows icons other people shared for it. Click one to use it, then **Apply to PS5**. To share yours, choose or drop an icon, click **Share your icon**, and accept the guidelines. It goes live right away. Use the ⚑ on an icon to report it.
+
+The library is run by `community-server/` (a few PHP files on the PSGFX website that save icons to a public GitHub repository). See [community-server/SETUP.md](community-server/SETUP.md).
 
 ![Homebrew app with its current background](docs/screenshot-homebrew.png)
 

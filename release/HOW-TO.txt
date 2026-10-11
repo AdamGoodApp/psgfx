@@ -1,4 +1,4 @@
-PSGFX 1.3
+PSGFX 2.0
 Custom icons and backgrounds for your PS5 homebrew and games, and your home-screen layout.
 
 BEFORE YOU START
@@ -11,12 +11,18 @@ STEPS
  1. Double-click PSGFX.exe. PSGFX opens in your browser.
     (If Windows SmartScreen warns, click "More info" > "Run anyway".
      If the firewall asks, allow it on private networks.)
- 2. Type your PS5's IP address and click Connect.
+ 2. PSGFX asks for your PS5's IP address. Type it and click Connect.
+    (Next time it connects by itself. Click the connection button at the top to change it.)
  3. Pick a homebrew app or an installed game from the list.
  4. Drop an image on the preview's tile (icon) or background (background),
     or use the "Choose image" buttons. Any PNG or JPEG works.
  5. Close that app or game on the PS5, then click "Apply to PS5".
  6. Restart the PS5 to see the new art.
+
+COMMUNITY ICONS (new in 2.0)
+ - Pick an app or game: the Icon tab shows icons other people shared for it.
+   Click one to use it, then Apply to PS5.
+ - To share yours, choose an icon, click "Share your icon" and accept the guidelines.
 
 MUSIC (new in 1.3)
  - Drop an MP3, WAV or FLAC on the preview, or use "Choose song".

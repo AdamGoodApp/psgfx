@@ -29,7 +29,11 @@
 #include <shellapi.h>
 #include <tlhelp32.h>
 #endif
-#define STUDIO_VERSION "1.3"
+#define STUDIO_VERSION "2.0"
+// Community icons server (community-server/ in this repo). psgfx.json "community" overrides it; empty hides the feature.
+#ifndef PSGFX_COMMUNITY
+#define PSGFX_COMMUNITY ""
+#endif
 
 using json = nlohmann::json;
 
@@ -51,6 +55,7 @@ struct Staged {                 // the user's image, decoded; converted per targ
 static std::mutex g_mu;
 static std::string g_ip;
 static std::string g_engine;              // PS5 Upload's engine, "host:port"; empty = 127.0.0.1:19113
+static std::string g_community = PSGFX_COMMUNITY, g_community_set;   // the server, and the psgfx.json override if any
 static std::map<std::string, Staged> g_staged;           // "icon" | "background"
 static std::map<std::string, std::vector<uint8_t>> g_icon_cache;
 static std::string g_config_path = "psgfx.json";
@@ -61,12 +66,17 @@ static void load_config() {
     std::ifstream f(g_config_path);
     if (!f && !g_legacy_config_path.empty()) f.open(g_legacy_config_path);
     if (!f) return;
-    try { json j; f >> j; g_ip = j.value("ip", ""); g_engine = j.value("engine", ""); } catch (...) {}
+    try {
+        json j; f >> j; g_ip = j.value("ip", ""); g_engine = j.value("engine", "");
+        g_community_set = j.value("community", "");
+        if (!g_community_set.empty()) g_community = g_community_set;
+    } catch (...) {}
 }
 static void save_config() {
     std::ofstream f(g_config_path);
     json j = {{"ip", g_ip}};
     if (!g_engine.empty()) j["engine"] = g_engine;
+    if (!g_community_set.empty()) j["community"] = g_community_set;
     f << j.dump(2);
 }
 
@@ -978,7 +988,7 @@ static void handle(sock_t s, Req &r) {
             else if (r.path == "/f/sora700.woff2") { d = sora700; n = sora700_len; }
             if (d) { respond(s, 200, "font/woff2", d, n); return; }
         }
-        if (r.path == "/api/config") { std::lock_guard<std::mutex> l(g_mu); respond_json(s, {{"ip", g_ip}}); return; }
+        if (r.path == "/api/config") { std::lock_guard<std::mutex> l(g_mu); respond_json(s, {{"ip", g_ip}, {"community", g_community}, {"version", STUDIO_VERSION}}); return; }
         if (r.path == "/api/connect" && r.method == "POST") {
             json j = json::parse(std::string(r.body.begin(), r.body.end()));
             { std::lock_guard<std::mutex> l(g_mu); g_ip = j.value("ip", ""); g_icon_cache.clear(); }
@@ -1018,6 +1028,12 @@ static void handle(sock_t s, Req &r) {
             { std::lock_guard<std::mutex> l(g_mu); auto it = g_staged.find("music"); if (it != g_staged.end()) b = it->second.preview_wav; }
             if (b.empty()) { respond(s, 404, "text/plain", "none", 4); return; }
             respond(s, 200, "audio/wav", b.data(), b.size()); return;
+        }
+        if (r.path == "/api/share/icon") {            // the staged icon at full size, for sharing with the community
+            std::vector<uint8_t> b;
+            { std::lock_guard<std::mutex> l(g_mu); auto it = g_staged.find("icon"); if (it != g_staged.end()) b = img::to_png(img::cover(it->second.src, 512, 512)); }
+            if (b.empty()) { respond(s, 404, "text/plain", "none", 4); return; }
+            respond(s, 200, "image/png", b.data(), b.size()); return;
         }
         if (r.path.rfind("/api/staged/", 0) == 0) {
             std::vector<uint8_t> b;

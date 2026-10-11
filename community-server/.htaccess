@@ -1,0 +1,5 @@
+# Only the four pages are public; the settings and helper files are not.
+<FilesMatch "^(config|config\.sample|lib)\.php$">
+  Require all denied
+</FilesMatch>
+Options -Indexes
