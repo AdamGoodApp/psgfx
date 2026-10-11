@@ -311,7 +311,7 @@ static json list_apps() {
     auto c = client();
     std::map<std::string, std::string> src, name;
     std::set<std::string> mounted;
-    json reg = json::parse(c.call_str(ps5::APP_LIST, "{}"));
+    json reg = json::parse(c.call_str(ps5::APP_LIST, "{}", 120000));   // 10-75 s on firmware 13.60
     for (auto &a : reg.value("apps", json::array())) {
         std::string id = a.value("title_id", "");
         src[id] = a.value("src", "");
@@ -322,7 +322,7 @@ static json list_apps() {
     bool have_db = false;
     std::set<std::string> in_db;
     try {   // Sony's app list with real names (newer PS5 Upload payloads)
-        json db = json::parse(c.call_str(ps5::APP_DB_QUERY, "{}"));
+        json db = json::parse(c.call_str(ps5::APP_DB_QUERY, "{}", 120000));
         for (auto &a : db.value("apps", json::array())) {
             std::string id = a.value("title_id", ""), n = a.value("name", "");
             if (id.empty()) continue;
