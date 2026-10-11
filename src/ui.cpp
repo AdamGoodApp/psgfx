@@ -191,6 +191,7 @@ button,input,select{font:inherit;color:inherit}
 .mclip label{color:var(--muted);font-size:13.5px;display:flex;gap:8px;align-items:center}
 .mclip input,.mclip select{padding:8px 12px;border-radius:var(--r-sm);border:1px solid var(--line);background:rgba(0,0,0,.3);color:var(--ink);font-size:14px}
 .mclip input{width:80px}
+.mclip input[type=checkbox]{width:auto;accent-color:#9fd3ff}
 .mclip audio{height:38px;flex:1;min-width:240px}
 .field{display:grid;gap:8px}
 .field label{font-size:13.5px;color:var(--muted)}
@@ -384,6 +385,7 @@ button,input,select{font:inherit;color:inherit}
             <div class="mclip" id="mclip">
               <label>Start <input id="mstart" value="0:00" inputmode="numeric" title="Where the clip starts in the song (m:ss)"></label>
               <label>Length <select id="mlen"><option value="15">15 s</option><option value="30">30 s</option><option value="60">60 s</option><option value="0">Longest that fits</option></select></label>
+              <label title="Marks the whole clip as a loop. Turn off to let the PS5 decide what happens at the end."><input type="checkbox" id="mloop" checked> Loop</label>
               <audio id="maudio" controls preload="none"></audio>
             </div>
           </div>
@@ -730,7 +732,7 @@ async function stage(kind, file){
   try {
     const j = await api('/api/stage/'+kind, {method:'POST', body: await file.arrayBuffer()});
     st.staged[kind] = {note: j.note || '', summary: j.summary || '', fresh: true};
-    if (kind === 'music') { $('#mstart').value = fmtTime(j.start); $('#mlen').value = String(j.duration); }
+    if (kind === 'music') { $('#mstart').value = fmtTime(j.start); $('#mlen').value = String(j.duration); $('#mloop').checked = j.loop !== false; }
   } catch (err) { sl.textContent = err.message; sl.classList.add('warn'); return; }
   if (kind === 'icon') markPick(null);
   refreshPreview(false);
@@ -742,13 +744,13 @@ async function reclip(){
   const sl = document.querySelector('.slot[data-kind="music"] .s');
   sl.textContent = 'Converting…'; sl.classList.remove('warn');
   try {
-    const j = await api('/api/music/clip', {method:'POST', body: JSON.stringify({start: parseTime($('#mstart').value), duration: Number($('#mlen').value)})});
+    const j = await api('/api/music/clip', {method:'POST', body: JSON.stringify({start: parseTime($('#mstart').value), duration: Number($('#mlen').value), loop: $('#mloop').checked})});
     st.staged.music = {note: j.note || '', summary: j.summary || '', fresh: true};
     $('#mstart').value = fmtTime(j.start);
   } catch (err) { sl.textContent = err.message; sl.classList.add('warn'); return; }
   refreshPreview(false);
 }
-$('#mstart').addEventListener('change', reclip); $('#mlen').addEventListener('change', reclip);
+$('#mstart').addEventListener('change', reclip); $('#mlen').addEventListener('change', reclip); $('#mloop').addEventListener('change', reclip);
 $('#afile').onchange = e => { const f = e.target.files[0]; if (f) stage('music', f); };
 const isAudio = f => /^audio\//.test(f.type) || /\.(mp3|wav|flac|aiff?)$/i.test(f.name);
 

@@ -414,7 +414,7 @@ static void encode_music(Staged &s) {
 static json music_json(const Staged &s) {
     double total = (double)s.audio.pcm.size() / std::max(1, s.audio.channels) / std::max(1, s.audio.rate);
     return {{"ok", true}, {"note", s.note}, {"seconds", s.enc.seconds}, {"total", total}, {"kb", (int)(s.enc.at9.size() / 1024)},
-            {"start", s.opt.start_sec}, {"duration", s.opt.duration_sec},
+            {"start", s.opt.start_sec}, {"duration", s.opt.duration_sec}, {"loop", s.opt.loop},
             {"summary", secs(s.opt.start_sec) + " to " + secs(s.opt.start_sec + s.enc.seconds) + ", " + std::to_string(s.enc.at9.size() / 1024) + " KB"}};
 }
 static json stage_music(const std::vector<uint8_t> &bytes) {
@@ -427,7 +427,7 @@ static json stage_music(const std::vector<uint8_t> &bytes) {
     g_staged["music"] = std::move(s);
     return j;
 }
-// Start (seconds) and length (seconds; 0 = the longest that fits in the PS5's 2 MB limit).
+// Start (seconds), length (seconds; 0 = the longest that fits in the PS5's 2 MB limit) and loop.
 static json music_clip(const json &req) {
     Staged s;
     {
@@ -438,6 +438,7 @@ static json music_clip(const json &req) {
     }
     s.opt.start_sec = std::max(0.0, req.value("start", s.opt.start_sec));
     s.opt.duration_sec = std::max(0.0, req.value("duration", s.opt.duration_sec));
+    s.opt.loop = req.value("loop", s.opt.loop);   // off = no loop marker; the PS5 decides what happens at the end
     encode_music(s);
     json j = music_json(s);
     std::lock_guard<std::mutex> l(g_mu);
