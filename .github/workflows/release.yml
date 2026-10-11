@@ -29,10 +29,11 @@ jobs:
           cp release/HOW-TO.txt dist/PSGFX/
           cd dist && zip -r PSGFX-windows.zip PSGFX
 
+      # GitHub zips artifacts itself, so upload the folder: one zip to open, not a zip in a zip.
       - uses: actions/upload-artifact@v4
         with:
           name: PSGFX-windows
-          path: dist/PSGFX-windows.zip
+          path: dist/PSGFX
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')

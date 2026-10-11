@@ -22,6 +22,13 @@ html,body{margin:0;min-height:100%}
 body{background:radial-gradient(1200px 700px at 70% -10%,#13244a 0%,transparent 60%),var(--bg);background-attachment:fixed;color:var(--text);font-size:14px;line-height:1.5}
 button,input{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--blue-hi);outline-offset:2px}
+/* Scrollbars in the app's own style, not the browser's grey ones. */
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(160,190,255,.2);border-radius:12px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background-color:rgba(160,190,255,.3)}
+::-webkit-scrollbar-thumb:active{background-color:var(--blue)}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:rgba(160,190,255,.22) transparent}}
 
 .top{display:flex;align-items:center;gap:20px;padding:16px 24px;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:flex-end;gap:10px}
@@ -54,7 +61,7 @@ button,input{font:inherit;color:inherit}
 .app.locked{opacity:.5}
 .empty{color:var(--muted);padding:8px;font-size:13px}
 
-main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:column;gap:20px;max-width:1180px}
+main{border-left:1px solid var(--line);padding:24px max(24px,calc((100% - 1132px)/2));display:flex;flex-direction:column;gap:20px;min-width:0}
 
 /* The PS5 home-screen replica: the one bold element. */
 .stage{position:relative;aspect-ratio:16/9;width:min(100%,calc((100vh - 330px)*16/9));min-width:min(100%,520px);margin:0 auto;border-radius:var(--r-lg);overflow:hidden;background:linear-gradient(135deg,#101b33,#060913);border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.5)}
