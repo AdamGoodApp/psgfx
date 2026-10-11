@@ -55,6 +55,8 @@ To undo, select the app and click **Restore original**.
 3. Drag games into any order, or use **A–Z** / **Z–A**. Tick **Lock order** to keep it that way after you play other games.
 4. Click **Apply to PS5**, optionally saving the layout as a preset, then restart the PS5.
 
+![Home layout with the console-style preview](docs/screenshot-layout.png)
+
 PSGFX edits the console's home-screen database (`/system_data/priv/mms/app.db`) through PS5 Upload. It uploads the new database to `/data/psgfx` and has PS5 Upload's console shell copy it into place, then reads it back to check it. Backups and presets are kept in the **PSGFX Layout** folder next to `PSGFX.exe`. If the home screen ever looks wrong, restore a backup, or use Safe Mode → **Rebuild Database**. App Library always comes back on its own; the system adds it regardless of the database.
 
 ### Community icons
