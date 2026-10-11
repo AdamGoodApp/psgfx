@@ -34,11 +34,11 @@ def call(method, label, j):
         dbp = os.path.join(ROOT, "appdb.json")   # {"apps":[{"title_id":..,"app_id":..,"name":..}]}
         if os.environ.get("MOCK_NO_APPDB") or not os.path.exists(dbp): raise Refused("unsupported_in_mock")
         return open(dbp, "rb").read()
-    if method == 38:  # fs.read (the engine loops to the limit)
+    if method == 38:  # fs.read (the engine loops to the limit, capped at 2 MiB like LEGACY_READ_MAX)
         p = j.get("path", "")
         if not readable(p, j.get("unsafe", False)): raise Refused("fs_read_path_not_allowed")
         if not os.path.isfile(P(p)): raise Refused("fs_read_stat_failed")
-        with open(P(p), "rb") as f: f.seek(j.get("offset", 0)); return f.read(j.get("limit", 2 << 20))
+        with open(P(p), "rb") as f: f.seek(j.get("offset", 0)); return f.read(min(j.get("limit", 2 << 20), 2 << 20))
     if method == 33:  # fs.list, at most 256 a call
         p = j.get("path", "")
         if not os.path.isdir(P(p)): raise Refused("fs_list_dir_opendir_errno_2")

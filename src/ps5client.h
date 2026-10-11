@@ -162,7 +162,7 @@ struct Client {
     }
     std::vector<uint8_t> read_file(const std::string &path, size_t max_total = 64u << 20) {
         std::vector<uint8_t> out;
-        const size_t piece = 8u << 20;
+        const size_t piece = 2u << 20;   // PS5 Upload caps one fs.read at 2 MiB
         for (;;) {
             auto part = read(path, out.size(), piece, 60000);
             out.insert(out.end(), part.begin(), part.end());
