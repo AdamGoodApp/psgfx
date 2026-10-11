@@ -83,6 +83,12 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
 .slot .thumb{width:64px;height:64px;border-radius:10px;background:var(--bg2) center/cover no-repeat;flex:none;border:1px solid var(--line)}
 .slot.bgslot .thumb{width:96px;height:54px}
 .slot.musicslot{grid-column:1/-1;flex-wrap:wrap}
+.presets{grid-column:1/-1;background:var(--glass);border:1px solid var(--line);border-radius:var(--r-md);padding:14px}
+.presets .t{font-weight:600}.presets .s{color:var(--muted);font-size:12px}
+.presets .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.presets button{width:72px;height:72px;padding:0;border-radius:12px;border:2px solid transparent;background:var(--bg2) center/cover no-repeat;cursor:pointer}
+.presets button:hover{border-color:var(--line)}
+.presets button[aria-pressed="true"]{border-color:var(--blue-hi)}
 .slot.musicslot .thumb{display:grid;place-items:center;font-size:26px;color:var(--muted)}
 .mclip{display:none;gap:10px;align-items:center;flex-wrap:wrap;width:100%;margin-top:4px}
 .mclip.on{display:flex}
@@ -226,6 +232,7 @@ main{border-left:1px solid var(--line);padding:24px;display:flex;flex-direction:
       <div class="slots" style="margin-top:20px">
         <div class="slot" data-kind="icon"><div class="thumb"></div><div class="meta"><div class="t">Icon</div><div class="s">Square, 512 × 512 or larger</div><div class="row"><button class="btn pick">Choose image</button><button class="btn clear hidden">Remove</button></div></div></div>
         <div class="slot bgslot" data-kind="background"><div class="thumb"></div><div class="meta"><div class="t">Background</div><div class="s">16:9, ideally 3840 × 2160</div><div class="row"><button class="btn pick">Choose image</button><button class="btn clear hidden">Remove</button></div></div></div>
+        <div class="presets hidden" id="presets"><div class="t">Preset icons</div><div class="s" id="presetsS"></div><div class="row" id="presetsRow"></div></div>
         <div class="slot musicslot" data-kind="music"><div class="thumb" aria-hidden="true">&#9835;</div><div class="meta"><div class="t">Music</div><div class="s">MP3, WAV or FLAC. Plays when the tile is selected.</div><div class="row"><button class="btn pick">Choose song</button><button class="btn clear hidden">Remove</button></div></div>
           <div class="mclip" id="mclip">
             <label>Start <input id="mstart" value="0:00" inputmode="numeric" title="Where the clip starts in the song (m:ss)"></label>
@@ -368,6 +375,27 @@ async function select(a, btn){
   const game = a.kind === 'game';
   $('#anote').textContent = game ? 'Close the game first. The PS5 may put back its original art when the game updates.' : 'Close the app on your PS5 before applying.';
   refreshPreview(true);
+  loadPresets(a);
+}
+
+async function loadPresets(a){
+  const box = $('#presets'), row = $('#presetsRow');
+  box.classList.add('hidden'); row.innerHTML = '';
+  let j; try { j = await api('/api/presets/' + encodeURIComponent(a.title_id)); } catch { return; }
+  if (st.sel !== a || !j.presets.length) return;
+  $('#presetsS').textContent = 'Made for ' + j.presets[0].app + '. Pick one to use it as the icon.';
+  for (const p of j.presets) {
+    const b = document.createElement('button');
+    b.style.backgroundImage = `url(/api/preset/${p.i})`; b.title = p.app + ' preset ' + (row.children.length + 1);
+    b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', 'false');
+    b.onclick = async () => {
+      row.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      try { const r = await api('/api/preset/' + p.i, {method:'POST'}); st.staged.icon = {note: r.note || ''}; b.setAttribute('aria-pressed', 'true'); refreshPreview(false); }
+      catch (err) { $('#presetsS').textContent = err.message; }
+    };
+    row.appendChild(b);
+  }
+  box.classList.remove('hidden');
 }
 
 function refreshPreview(loadCurrent){

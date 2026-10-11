@@ -11,6 +11,7 @@
 #include "ps5client.h"
 #include "layout.h"
 #include "lib/at9/at9.h"
+#include "presets.h"
 #include "lib/json.hpp"
 
 #include <atomic>
@@ -586,15 +587,16 @@ static std::vector<uint8_t> read_head(ps5::Client &c, const std::string &path) {
     catch (...) { return {}; }
 }
 
-// Sets an art column for this title in every table that has it (all user profiles).
+// Sets an art column for this title in every table that has it (all user profiles). Empty = NULL.
 static void set_art_column(layout::DB &db, const layout::Info &info, const std::string &id, const std::string &concept,
                            const std::string &col, const std::string &value) {
+    layout::Val v = value.empty() ? layout::Val(nullptr) : layout::Val(value);
     for (auto &[table, cols] : info.cols) {
         if (!cols.count(col)) continue;
         if (cols.count("localConceptId") && !concept.empty())
-            db.exec("UPDATE " + layout::q(table) + " SET " + layout::q(col) + "=? WHERE localConceptId=?", {value, concept});
+            db.exec("UPDATE " + layout::q(table) + " SET " + layout::q(col) + "=? WHERE localConceptId=?", {v, concept});
         else if (cols.count("titleId"))
-            db.exec("UPDATE " + layout::q(table) + " SET " + layout::q(col) + "=? WHERE titleId=?", {value, id});
+            db.exec("UPDATE " + layout::q(table) + " SET " + layout::q(col) + "=? WHERE titleId=?", {v, id});
     }
 }
 
@@ -615,6 +617,27 @@ static json read_originals(ps5::Client &c, const std::string &id) {
     if (!exists(c, appmeta(id), ORIGINALS)) return json::object();
     try { auto b = c.read_file(appmeta(id) + "/" + ORIGINALS, 1u << 20); return json::parse(b.begin(), b.end()); }
     catch (...) { return json::object(); }
+}
+
+static std::string ts_query() { return "?ts=" + std::to_string((long long)time(nullptr)); }
+
+// The home screen only plays a title's music when its app.db row names the file (snd0Info);
+// the PS5 fills that in at install time, so an app installed without music has it empty.
+// Points it at `path` (homebrew: /user/app/<id>/sce_sys/snd0.at9, like the PS5 does), or
+// clears it when `path` is empty.
+static void point_music(const std::string &id, const std::string &path, json &log) {
+    std::lock_guard<std::mutex> l(g_layout_mu);
+    try {
+        auto orig = pull_db();
+        layout::DB db(orig);
+        auto info = layout::analyze(db, g_layout_user);
+        std::string col = music_column(info);
+        if (col.empty()) { log.push_back("This firmware's home-screen database has no music entry, so the music may not play."); return; }
+        set_art_column(db, info, id, concept_of(db, info, id), col, path.empty() ? "" : path + ts_query());
+        upload_db(orig, db, (path.empty() ? "Before removing music for " : "Before music for ") + id, log);
+    } catch (const std::exception &e) {
+        log.push_back(std::string("Couldn't point the home screen at the music (") + e.what() + "), so it may not play.");
+    }
 }
 
 // Returns the staged slots it handled; the rest fall back to replacing the art-folder files.
@@ -641,7 +664,8 @@ static std::set<std::string> game_apply_db(ps5::Client &c, const std::string &id
         if (col.empty()) continue;
         std::string value = db.scalar_str("SELECT " + layout::q(col) + " FROM " + layout::q(info.concept_t) + " WHERE localConceptId=?", {concept});
         std::string path = layout::strip_query(value);
-        if (path.empty() || path[0] != '/') continue;
+        // A title without music has no snd0Info at all; the home screen plays nothing until it's set.
+        if (!(kind == "music" && path.empty()) && (path.empty() || path[0] != '/')) continue;
         std::string base = path.substr(path.find_last_of('/') + 1);
         bool in_dir = path == dir + "/" + base, ours = in_dir && base.rfind("psgfx_", 0) == 0;
         if (in_dir && !ours) {   // a real file in the art folder: replacing it in place works
@@ -668,7 +692,7 @@ static std::set<std::string> game_apply_db(ps5::Client &c, const std::string &id
         if (!originals.contains(col)) originals[col] = value;
         if (ours) replaced.push_back(dir + "/" + base);
         size_t qp = value.find('?');
-        set_art_column(db, info, id, concept, col, dir + "/" + t.name + (qp == std::string::npos ? "" : value.substr(qp)));
+        set_art_column(db, info, id, concept, col, dir + "/" + t.name + (qp == std::string::npos ? ts_query() : value.substr(qp)));
         done.insert(kind);
     }
     if (done.empty()) return done;
@@ -729,6 +753,10 @@ static json do_apply(const std::string &id, const std::string &src, std::string 
 
     if (kind_of_app == "game") {
         auto via_db = game_apply_db(c, id, staged, log);
+        if (via_db.count("music") && exists(c, appmeta(id), "param.json")) {
+            backup_once(c, appmeta(id), "param.json", log);
+            set_music_loudness(c, appmeta(id) + "/param.json", staged["music"].enc.loudness_param, log);
+        }
         int written = (int)via_db.size();
         std::vector<std::string> seen;
         for (auto &[kind, s] : staged) {
@@ -774,6 +802,10 @@ static json do_apply(const std::string &id, const std::string &src, std::string 
             changed.push_back("param.json");
         }
         sync_home(c, id, src, changed, log);
+        if (music) {
+            point_music(id, "/user/app/" + id + "/sce_sys/snd0.at9", log);
+            log.push_back("Restart the PS5, then hover the app to hear its music.");
+        }
     }
     { std::lock_guard<std::mutex> l(g_mu); g_icon_cache.erase(id); g_staged.clear(); }
     return {{"ok", true}, {"log", log}};
@@ -809,7 +841,11 @@ static json do_restore(const std::string &id, const std::string &src, std::strin
         }
     }
     if (kind_of_app == "game") log.push_back("Done. Restart the PS5 to see the original art.");
-    else sync_home(c, id, src, names, log);
+    else {
+        sync_home(c, id, src, names, log);
+        if (std::find(names.begin(), names.end(), "snd0.at9") != names.end())
+            point_music(id, exists(c, dir, "snd0.at9") ? "/user/app/" + id + "/sce_sys/snd0.at9" : "", log);
+    }
     { std::lock_guard<std::mutex> l(g_mu); g_icon_cache.erase(id); }
     return {{"ok", true}, {"log", log}};
 }
@@ -964,6 +1000,18 @@ static void handle(sock_t s, Req &r) {
         }
         if (r.path.rfind("/api/stage/", 0) == 0 && r.method == "POST") { respond_json(s, stage(r.path.substr(11), r.body)); return; }
         if (r.path.rfind("/api/unstage/", 0) == 0) { std::lock_guard<std::mutex> l(g_mu); g_staged.erase(r.path.substr(13)); respond_json(s, {{"ok", true}}); return; }
+        if (r.path.rfind("/api/presets/", 0) == 0) {   // /api/presets/<title id> -> the built-in icons for it
+            std::string id = r.path.substr(13);
+            json list = json::array();
+            for (size_t i = 0; i < PRESETS_COUNT; i++) if (id == PRESETS[i].title_id) list.push_back({{"i", i}, {"app", PRESETS[i].app}});
+            respond_json(s, {{"ok", true}, {"presets", list}}); return;
+        }
+        if (r.path.rfind("/api/preset/", 0) == 0) {    // /api/preset/<index>: the image; POST stages it as the icon
+            size_t i = (size_t)strtoull(r.path.c_str() + 12, nullptr, 10);
+            if (i >= PRESETS_COUNT) { respond(s, 404, "text/plain", "none", 4); return; }
+            if (r.method == "POST") { respond_json(s, stage("icon", std::vector<uint8_t>(PRESETS[i].data, PRESETS[i].data + PRESETS[i].len))); return; }
+            respond(s, 200, "image/png", PRESETS[i].data, PRESETS[i].len); return;
+        }
         if (r.path == "/api/music/clip" && r.method == "POST") { respond_json(s, music_clip(json::parse(std::string(r.body.begin(), r.body.end())))); return; }
         if (r.path == "/api/staged/music") {
             std::vector<uint8_t> b;
