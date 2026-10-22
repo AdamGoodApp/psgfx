@@ -38,7 +38,7 @@ if [[ "${1:-}" == "mac" ]]; then
   echo "Built $APP"
   exit 0
 fi
-if [[ "$(uname -s)" == "Darwin" ]]; then echo "On a Mac, run: ./build.sh mac"; exit 1; fi
+if [[ "${1:-}" == "linux" && "$(uname -s)" == "Darwin" ]]; then echo "On a Mac, run: ./build.sh mac" >&2; exit 1; fi
 
 if [[ "${1:-}" == "linux" ]]; then
   for f in src/lib/blake3.c src/lib/blake3_dispatch.c src/lib/blake3_portable.c; do
@@ -50,7 +50,9 @@ if [[ "${1:-}" == "linux" ]]; then
   exit 0
 fi
 
-if command -v x86_64-w64-mingw32-g++ >/dev/null; then P=x86_64-w64-mingw32-; else P=""; fi
+if command -v x86_64-w64-mingw32-g++ >/dev/null; then P=x86_64-w64-mingw32-
+elif [[ "$(uname -s)" == "Darwin" ]]; then echo "On a Mac, run: ./build.sh mac (or install mingw-w64 to cross-build PSGFX.exe)" >&2; exit 1
+else P=""; fi
 for f in src/lib/blake3.c src/lib/blake3_dispatch.c src/lib/blake3_portable.c; do
   ${P}gcc $BLAKE3_FLAGS -c "$f" -o "build/$(basename "${f%.c}").o"
 done

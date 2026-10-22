@@ -22,7 +22,7 @@
 
 PSGFX gives your PS5 homebrew and games new home-screen art, and lets you arrange the home screen itself: hide tiles like the PlayStation Store, rename anything, move apps between Games and Media, and lock your games in the order you want. Pick an app, drop in any image, and click **Apply**. PSGFX resizes and converts it to the exact format the console expects, uploads it to the right folder, and keeps a backup of the original so you can undo it with one click.
 
-It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the PS5 Upload app open on your PC, connected to your console, and PSGFX does its work through it. There's nothing else to install: PSGFX is a single `.exe` on Windows or a single app on Mac.
+It works through [PS5 Upload](https://github.com/phantomptr/ps5upload): keep the PS5 Upload app open on the same computer, connected to your console, and PSGFX does its work through it. There's nothing else to install: PSGFX is a single `.exe` on Windows or a single app on Mac.
 
 ![Previewing a new icon and background before applying](docs/screenshot-preview.png)
 
@@ -86,7 +86,7 @@ The library is run by `community-server/` (a few PHP files on the PSGFX website 
 - **Image sizes:** icons look best at 512 × 512 or larger. Backgrounds look best at 3840 × 2160. PSGFX crops and scales anything else automatically.
 - **Game updates:** the PS5 may put back a game's original art when that game updates. Apply yours again afterwards.
 - **Windows SmartScreen:** the app isn't code-signed, so Windows may warn the first time. Click **More info → Run anyway**. If the firewall asks, allow PSGFX on private networks.
-- **macOS Gatekeeper:** the app isn't notarized, so the first launch is blocked with "Apple could not verify PSGFX". Open System Settings → Privacy & Security, scroll down, click **Open Anyway**, then open PSGFX again (or run `xattr -dr com.apple.quarantine PSGFX.app` in Terminal).
+- **macOS Gatekeeper:** the app isn't notarized, so macOS blocks the first launch ("Apple could not verify PSGFX" or "the developer cannot be verified"). Open System Settings → Privacy & Security (on macOS 12 and older: System Preferences → Security & Privacy → General), click **Open Anyway**, then open PSGFX again. Or run `xattr -dr com.apple.quarantine /path/to/PSGFX.app` in Terminal.
 - **Quitting:** on Windows close the black console window; on Mac close the PSGFX window or press Cmd-Q.
 
 ![Apply result](docs/screenshot-applied.png)

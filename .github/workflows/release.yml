@@ -69,4 +69,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/PSGFX-macos.zip
-          generate_release_notes: true
+          # no generate_release_notes: the windows-exe job already wrote them; repeating appends a second copy

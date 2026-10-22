@@ -1156,7 +1156,9 @@ int main(int argc, char **argv) {
 #endif
 #ifdef __APPLE__
     std::thread(serve, ls).detach();
-    mac_run_app(url);           // the PSGFX window; returns when the user quits
+    // Quitting calls exit(), which would run global destructors under request threads still in flight; skip them.
+    std::atexit([] { fflush(nullptr); _exit(0); });
+    mac_run_app(url);           // the PSGFX window; never returns (quitting exits the process)
     return 0;
 #else
     serve(ls);

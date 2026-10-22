@@ -12,8 +12,9 @@ STEPS
     Mac: open PSGFX.app; PSGFX opens its own window.
     (Windows: if SmartScreen warns, click "More info" > "Run anyway"; if the firewall asks,
      allow it on private networks.
-     Mac: if macOS says it can't verify PSGFX, open System Settings > Privacy & Security,
-     scroll down, click "Open Anyway", then open PSGFX again.)
+     Mac: if macOS says it can't verify PSGFX, open System Settings > Privacy & Security
+     (macOS 12 and older: System Preferences > Security & Privacy > General),
+     click "Open Anyway", then open PSGFX again.)
  2. PSGFX asks for your PS5's IP address. Type it and click Connect.
     (Next time it connects by itself. Click the connection button at the top to change it.)
  3. Pick a homebrew app or an installed game from the list.
