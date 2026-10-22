@@ -4,6 +4,18 @@
 #import <WebKit/WebKit.h>
 #include <string>
 
+// Right-click → Reload would drop unsaved Home layout edits without the page's beforeunload prompt, so drop it.
+// The identifier string is what WebKit sets on that item (its constant isn't in the public headers).
+@interface PSGFXWebView : WKWebView
+@end
+@implementation PSGFXWebView
+- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+    for (NSMenuItem *i in [menu.itemArray copy])
+        if ([i.identifier isEqualToString:@"WKMenuItemIdentifierReload"]) [menu removeItem:i];
+    [super willOpenMenu:menu withEvent:event];
+}
+@end
+
 @interface PSGFXApp : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate>
 @property (strong) NSWindow *window;
 @property (strong) WKWebView *web;
@@ -12,7 +24,7 @@
 
 @implementation PSGFXApp
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
-    self.web = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 1280, 800) configuration:[WKWebViewConfiguration new]];
+    self.web = [[PSGFXWebView alloc] initWithFrame:NSMakeRect(0, 0, 1280, 800) configuration:[WKWebViewConfiguration new]];
     self.web.UIDelegate = self; self.web.navigationDelegate = self;
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 800) styleMask:style backing:NSBackingStoreBuffered defer:NO];
@@ -33,6 +45,10 @@
     [self.web evaluateJavaScript:@"typeof lchanges === 'function' ? lchanges() : 0" completionHandler:^(id r, NSError *e) {
         if (e || ![r isKindOfClass:[NSNumber class]] || [r integerValue] == 0) { [app replyToApplicationShouldTerminate:YES]; return; }
         NSAlert *al = [NSAlert new];
+        // Dock Quit, logout, or a minimized/hidden window: bring the window up so the sheet is seen.
+        [NSApp unhide:nil]; [NSApp activateIgnoringOtherApps:YES];
+        if (self.window.miniaturized) [self.window deminiaturize:nil];
+        [self.window makeKeyAndOrderFront:nil];
         al.messageText = @"Discard unsaved Home layout changes?";
         al.informativeText = @"They haven't been applied to the PS5.";
         [al addButtonWithTitle:@"Quit"]; [al addButtonWithTitle:@"Cancel"];
