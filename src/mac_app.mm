@@ -4,7 +4,7 @@
 #import <WebKit/WebKit.h>
 #include <string>
 
-@interface PSGFXApp : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate>
+@interface PSGFXApp : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate>
 @property (strong) NSWindow *window;
 @property (strong) WKWebView *web;
 @property (strong) NSURL *url;
@@ -18,6 +18,7 @@
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 800) styleMask:style backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"PSGFX"; self.window.minSize = NSMakeSize(900, 600);
     self.window.releasedWhenClosed = NO;   // ARC owns it via the strong property
+    self.window.delegate = self;
     self.window.contentView = self.web;
     if (![self.window setFrameUsingName:@"PSGFXMain"]) [self.window center];   // first launch: centered; later: where it was left
     [self.window setFrameAutosaveName:@"PSGFXMain"];
@@ -25,7 +26,22 @@
     [NSApp activateIgnoringOtherApps:YES];
     [self.web loadRequest:[NSURLRequest requestWithURL:self.url]];
 }
-- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)a { return YES; }   // closing the window quits
+// Closing the window quits, through the same unsaved-changes check as Cmd-Q.
+- (BOOL)windowShouldClose:(NSWindow *)w { dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; }); return NO; }
+// The browser version warns via beforeunload; here ask the page itself (lchanges() in ui.cpp) before quitting.
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
+    [self.web evaluateJavaScript:@"typeof lchanges === 'function' ? lchanges() : 0" completionHandler:^(id r, NSError *e) {
+        if (e || ![r isKindOfClass:[NSNumber class]] || [r integerValue] == 0) { [app replyToApplicationShouldTerminate:YES]; return; }
+        NSAlert *al = [NSAlert new];
+        al.messageText = @"Discard unsaved Home layout changes?";
+        al.informativeText = @"They haven't been applied to the PS5.";
+        [al addButtonWithTitle:@"Quit"]; [al addButtonWithTitle:@"Cancel"];
+        [al beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse resp) {
+            [app replyToApplicationShouldTerminate:resp == NSAlertFirstButtonReturn];
+        }];
+    }];
+    return NSTerminateLater;   // not cancel-and-retry, so logout/shutdown keeps waiting for the answer
+}
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)a hasVisibleWindows:(BOOL)v { [self.window makeKeyAndOrderFront:nil]; return NO; }
 - (void)openInBrowser:(id)sender { [[NSWorkspace sharedWorkspace] openURL:self.url]; }
 
