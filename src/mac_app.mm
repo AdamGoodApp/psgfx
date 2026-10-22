@@ -17,6 +17,7 @@
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 800) styleMask:style backing:NSBackingStoreBuffered defer:NO];
     self.window.title = @"PSGFX"; self.window.minSize = NSMakeSize(900, 600);
+    self.window.releasedWhenClosed = NO;   // ARC owns it via the strong property
     self.window.contentView = self.web;
     if (![self.window setFrameUsingName:@"PSGFXMain"]) [self.window center];   // first launch: centered; later: where it was left
     [self.window setFrameAutosaveName:@"PSGFXMain"];
